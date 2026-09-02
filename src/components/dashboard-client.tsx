@@ -35,6 +35,7 @@ type Props = {
   categories: CategoryOption[];
   debts: Debt[];
   openDebts: Debt[];
+  openDebtCount: number;
   ledgerMode: LedgerMode;
   month: { key: string; label: string; previous: string; next: string };
   summary: { youOwe: number; owedToYou: number; paidByYou: number; paidToYou: number; allTimeYouOwe: number; allTimeOwedToYou: number };
@@ -42,7 +43,7 @@ type Props = {
 };
 
 export function DashboardClient(props: Props) {
-  const { currentUser, household, members, categories, debts, openDebts, ledgerMode, month, summary, chart } = props;
+  const { currentUser, household, members, categories, debts, openDebts, openDebtCount, ledgerMode, month, summary, chart } = props;
   const router = useRouter();
   const [entryOpen, setEntryOpen] = useState(false);
   const [entrySession, setEntrySession] = useState(0);
@@ -101,6 +102,7 @@ export function DashboardClient(props: Props) {
           month={month}
           monthlyDebts={debts}
           openDebts={openDebts}
+          openDebtCount={openDebtCount}
           currentUser={currentUser}
           currency={currency}
           summary={summary}
@@ -127,11 +129,12 @@ function SummaryCard({ label, value, currency, icon: Icon, tone, detail, onDetai
   return <Card className="p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p>{onDetailClick ? <button type="button" onClick={onDetailClick} className="mt-3 text-left text-xs font-bold text-primary hover:underline">{detail} · View all unpaid</button> : <p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p>}</Card>;
 }
 
-function LedgerCard({ mode, month, monthlyDebts, openDebts, currentUser, currency, summary, pending, canAdd, onModeChange, onAdd, run }: {
+function LedgerCard({ mode, month, monthlyDebts, openDebts, openDebtCount, currentUser, currency, summary, pending, canAdd, onModeChange, onAdd, run }: {
   mode: LedgerMode;
   month: Props["month"];
   monthlyDebts: Debt[];
   openDebts: Debt[];
+  openDebtCount: number;
   currentUser: Member;
   currency: string;
   summary: Props["summary"];
@@ -173,7 +176,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, currentUser, currenc
             <CardTitle>{mode === "OPEN" ? "All unpaid" : "Monthly ledger"}</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
               {mode === "OPEN"
-                ? `${openDebts.length} ${openDebts.length === 1 ? "entry" : "entries"} still open across all months`
+                ? `${openDebtCount} ${openDebtCount === 1 ? "entry" : "entries"} still open across all months`
                 : `${monthlyDebts.length} ${monthlyDebts.length === 1 ? "entry" : "entries"} recorded in ${month.label}`}
             </p>
           </div>
@@ -192,7 +195,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, currentUser, currenc
               onClick={() => onModeChange("OPEN")}
               className={`flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition sm:px-4 ${mode === "OPEN" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
             >
-              All unpaid <span className="rounded-full bg-[#f8e4da] px-1.5 py-0.5 text-[10px] text-[#9e4f37]">{openDebts.length}</span>
+              All unpaid <span className="rounded-full bg-[#f8e4da] px-1.5 py-0.5 text-[10px] text-[#9e4f37]">{openDebtCount}</span>
             </button>
           </div>
         </div>

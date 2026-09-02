@@ -13,7 +13,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
   const start = new Date(month.getFullYear(), month.getMonth(), 1);
   const end = addMonths(start, 1);
 
-  const [monthDebts, paidByMe, paidToMe, openAll] = await Promise.all([
+  const [monthDebts, paidByMe, paidToMe, openSummary, openAll] = await Promise.all([
     prisma.debt.findMany({
       where: { householdId: user.householdId!, incurredAt: { gte: start, lt: end } },
       include: { lender: { select: { id: true, name: true } }, borrower: { select: { id: true, name: true } } },
@@ -27,11 +27,19 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
       where: { householdId: user.householdId!, lenderId: user.id, status: "PAID", paidAt: { gte: start, lt: end } },
       _sum: { amount: true },
     }),
-    prisma.debt.findMany({
+    prisma.debt.groupBy({
+      by: ["borrowerId", "lenderId"],
       where: { householdId: user.householdId!, status: "DEBT" },
-      include: { lender: { select: { id: true, name: true } }, borrower: { select: { id: true, name: true } } },
-      orderBy: { incurredAt: "desc" },
+      _sum: { amount: true },
+      _count: { _all: true },
     }),
+    ledgerMode === "OPEN"
+      ? prisma.debt.findMany({
+          where: { householdId: user.householdId!, status: "DEBT" },
+          include: { lender: { select: { id: true, name: true } }, borrower: { select: { id: true, name: true } } },
+          orderBy: { incurredAt: "desc" },
+        })
+      : Promise.resolve([]),
   ]);
 
   const serializeDebt = (debt: (typeof monthDebts)[number]) => ({
@@ -52,8 +60,9 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
 
   const youOwe = debts.filter((d) => d.borrower.id === user.id && d.status === "DEBT").reduce((sum, d) => sum + d.amount, 0);
   const owedToYou = debts.filter((d) => d.lender.id === user.id && d.status === "DEBT").reduce((sum, d) => sum + d.amount, 0);
-  const allTimeYouOwe = openDebts.filter((d) => d.borrower.id === user.id).reduce((sum, d) => sum + d.amount, 0);
-  const allTimeOwedToYou = openDebts.filter((d) => d.lender.id === user.id).reduce((sum, d) => sum + d.amount, 0);
+  const openDebtCount = openSummary.reduce((sum, group) => sum + group._count._all, 0);
+  const allTimeYouOwe = openSummary.filter((group) => group.borrowerId === user.id).reduce((sum, group) => sum + Number(group._sum.amount ?? 0), 0);
+  const allTimeOwedToYou = openSummary.filter((group) => group.lenderId === user.id).reduce((sum, group) => sum + Number(group._sum.amount ?? 0), 0);
 
   const days = Array.from({ length: endOfMonth(start).getDate() }, (_, index) => {
     const day = index + 1;
@@ -73,6 +82,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
       categories={normalizeCategories(user.household!.categoryConfig)}
       debts={debts}
       openDebts={openDebts}
+      openDebtCount={openDebtCount}
       ledgerMode={ledgerMode}
       month={{ key: format(start, "yyyy-MM"), label: format(start, "MMMM yyyy"), previous: format(addMonths(start, -1), "yyyy-MM"), next: format(addMonths(start, 1), "yyyy-MM") }}
       summary={{ youOwe, owedToYou, paidByYou: Number(paidByMe._sum.amount ?? 0), paidToYou: Number(paidToMe._sum.amount ?? 0), allTimeYouOwe, allTimeOwedToYou }}
