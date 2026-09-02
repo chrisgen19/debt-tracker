@@ -48,3 +48,43 @@ button, a, select { -webkit-tap-highlight-color: transparent; }
 button, select { cursor: pointer; }
 button:disabled, select:disabled { cursor: not-allowed; }
 ::selection { background: #cfe0cf; color: #183228; }
+
+/* Entry sheet: a native <dialog> so the browser owns the top layer, focus trap and Esc.
+   `overlay` in the transition list keeps it painted while the exit animation runs. */
+dialog.sheet {
+  margin: auto;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  max-width: min(40rem, 100%);
+  max-height: 100svh;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  transition: opacity .2s ease, display .2s allow-discrete, overlay .2s allow-discrete;
+}
+dialog.sheet[open] { opacity: 1; }
+@starting-style { dialog.sheet[open] { opacity: 0; } }
+
+dialog.sheet::backdrop {
+  background: rgba(16, 37, 27, 0);
+  transition: background-color .28s ease, display .28s allow-discrete, overlay .28s allow-discrete;
+}
+dialog.sheet[open]::backdrop { background: rgba(16, 37, 27, .5); backdrop-filter: blur(4px); }
+@starting-style { dialog.sheet[open]::backdrop { background: rgba(16, 37, 27, 0); } }
+
+/* Desktop lifts and settles; mobile rises from the bottom edge as a sheet. */
+.sheet-panel { transform: translateY(14px) scale(.985); transition: transform .3s cubic-bezier(.32, .72, 0, 1); }
+dialog.sheet[open] .sheet-panel { transform: none; }
+@starting-style { dialog.sheet[open] .sheet-panel { transform: translateY(14px) scale(.985); } }
+
+@media (max-width: 639px) {
+  dialog.sheet { margin: auto auto 0; max-width: 100%; }
+  .sheet-panel { transform: translateY(100%); }
+  @starting-style { dialog.sheet[open] .sheet-panel { transform: translateY(100%); } }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.sheet, dialog.sheet::backdrop { transition-duration: .01ms; }
+  .sheet-panel, dialog.sheet[open] .sheet-panel { transform: none; transition: none; }
+}

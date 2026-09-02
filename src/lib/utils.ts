@@ -21,3 +21,9 @@ export function initials(name: string) {
     .slice(0, 2)
     .toUpperCase();
 }
+
+/** Pulls just the symbol out of a formatted amount, e.g. "PHP" -> "₱". Falls back to the code. */
+export function currencySymbol(currency = "USD") {
+  const parts = new Intl.NumberFormat("en", { style: "currency", currency, maximumFractionDigits: 0 }).formatToParts(0);
+  return parts.find((part) => part.type === "currency")?.value ?? currency;
+}
