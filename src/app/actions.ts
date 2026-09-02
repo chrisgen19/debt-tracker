@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { normalizeCategories } from "@/lib/categories";
 import { prisma } from "@/lib/prisma";
 
 type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
@@ -19,6 +20,11 @@ const debtSchema = z.object({
   notes: z.string().trim().max(1000).optional(),
   status: z.enum(["DEBT", "PAID"]),
 });
+
+const categoryConfigSchema = z.array(z.object({
+  name: z.string().trim().min(1).max(30),
+  ideas: z.array(z.string().trim().min(1).max(40)).max(12),
+})).min(1).max(20);
 
 async function actor() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -36,6 +42,11 @@ export async function createDebt(input: unknown): Promise<ActionResult> {
     if (parsed.data.lenderId === parsed.data.borrowerId) return { ok: false, error: "Lender and borrower must be different people" };
     const members = await prisma.user.count({ where: { id: { in: [parsed.data.lenderId, parsed.data.borrowerId] }, householdId: user.householdId } });
     if (members !== 2) return { ok: false, error: "Both people must belong to your household" };
+    const household = await prisma.household.findUnique({ where: { id: user.householdId! }, select: { categoryConfig: true } });
+    const categories = normalizeCategories(household?.categoryConfig);
+    if (!categories.some((category) => category.name === parsed.data.category)) {
+      return { ok: false, error: "Choose a category from your household settings" };
+    }
     const incurredAt = new Date(parsed.data.incurredAt);
     if (Number.isNaN(incurredAt.getTime())) return { ok: false, error: "Choose a valid date and time" };
     await prisma.debt.create({
@@ -100,4 +111,37 @@ export async function updateHousehold(input: { name: string; currency: string })
     revalidatePath("/dashboard");
     return { ok: true, message: "Household updated" };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update your household" }; }
+}
+
+export async function updateCategoryConfig(input: unknown): Promise<ActionResult> {
+  try {
+    const user = await actor();
+    const parsed = categoryConfigSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Check your categories" };
+
+    const names = parsed.data.map((category) => category.name.toLocaleLowerCase());
+    if (new Set(names).size !== names.length) return { ok: false, error: "Category names must be unique" };
+
+    const categories = parsed.data.map((category) => {
+      const seen = new Set<string>();
+      return {
+        name: category.name,
+        ideas: category.ideas.filter((idea) => {
+          const key = idea.toLocaleLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }),
+      };
+    });
+
+    await prisma.household.update({
+      where: { id: user.householdId! },
+      data: { categoryConfig: categories },
+    });
+    revalidatePath("/dashboard");
+    return { ok: true, message: "Categories and quick picks updated" };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Could not update your categories" };
+  }
 }
