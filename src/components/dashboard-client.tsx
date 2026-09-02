@@ -6,7 +6,7 @@ import { format } from "date-fns";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import {
   ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight, Banknote, CalendarDays, Check, CheckCircle2,
-  ChevronDown, CreditCard, Ellipsis, HandCoins, Home, LayoutDashboard, LoaderCircle, LogOut,
+  ChevronDown, CreditCard, Ellipsis, HandCoins, Home, LayoutDashboard, LogOut,
   Plus, ReceiptText, Search, Settings2, Trash2, UserPlus, Users, WalletCards, X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -16,8 +16,8 @@ import { formatMoney, initials } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { EntryModal } from "@/components/entry-modal";
 
 type Member = { id: string; name: string; email: string };
 type Debt = {
@@ -35,12 +35,11 @@ type Props = {
   chart: { day: number; borrowed: number; lent: number }[];
 };
 
-const categories = ["Food", "Groceries", "Bills", "Shopping", "Travel", "Health", "Home", "Other"];
-
 export function DashboardClient(props: Props) {
   const { currentUser, household, members, debts, month, summary, chart } = props;
   const router = useRouter();
   const [entryOpen, setEntryOpen] = useState(false);
+  const [entrySession, setEntrySession] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"ALL" | "DEBT" | "PAID">("ALL");
@@ -63,6 +62,7 @@ export function DashboardClient(props: Props) {
     return [...groups.entries()];
   }, [filtered]);
 
+  function openEntry() { setEntrySession((session) => session + 1); setEntryOpen(true); }
   function goToMonth(key: string) { router.push(`/dashboard?month=${key}`); }
   function run(action: () => Promise<{ ok: boolean; message?: string; error?: string }>) {
     startTransition(async () => {
@@ -77,7 +77,7 @@ export function DashboardClient(props: Props) {
         <div className="mx-auto flex h-18 max-w-[1440px] items-center justify-between px-4 sm:px-6 lg:px-10">
           <div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground"><ArrowDownRight className="size-5" /></div><div><p className="font-display text-lg font-bold leading-none">Owewell</p><p className="mt-1 hidden text-[11px] font-semibold text-muted-foreground sm:block">{household.name}</p></div></div>
           <nav className="hidden items-center rounded-xl bg-secondary/70 p-1 md:flex"><span className="flex items-center gap-2 rounded-lg bg-card px-4 py-2 text-sm font-semibold shadow-sm"><LayoutDashboard className="size-4" />Overview</span><button onClick={() => setSettingsOpen(true)} className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground"><Users className="size-4" />Household</button></nav>
-          <div className="flex items-center gap-2"><Button onClick={() => setEntryOpen(true)} size="sm" disabled={!partner} className="hidden sm:flex"><Plus className="size-4" />Add entry</Button><button onClick={() => setSettingsOpen(true)} className="grid size-10 place-items-center rounded-full bg-[#dcebdc] text-sm font-bold text-primary">{initials(currentUser.name)}</button></div>
+          <div className="flex items-center gap-2"><Button onClick={openEntry} size="sm" disabled={!partner} className="hidden sm:flex"><Plus className="size-4" />Add entry</Button><button onClick={() => setSettingsOpen(true)} className="grid size-10 place-items-center rounded-full bg-[#dcebdc] text-sm font-bold text-primary">{initials(currentUser.name)}</button></div>
         </div>
       </header>
 
@@ -102,13 +102,13 @@ export function DashboardClient(props: Props) {
 
         <Card>
           <CardHeader className="gap-4 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle>Monthly ledger</CardTitle><p className="mt-1 text-sm text-muted-foreground">{debts.length} {debts.length === 1 ? "entry" : "entries"} recorded in {month.label}</p></div><div className="flex gap-2"><div className="relative min-w-0 flex-1 sm:w-56"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search entries" className="pl-9" /></div><select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className="rounded-xl border border-input bg-background px-3 text-sm font-semibold outline-none"><option value="ALL">All</option><option value="DEBT">Debt</option><option value="PAID">Paid</option></select></div></CardHeader>
-          <CardContent>{grouped.length ? <div className="space-y-7">{grouped.map(([date, entries]) => <div key={date}><div className="mb-3 flex items-center gap-3"><p className="text-xs font-bold uppercase tracking-[.16em] text-muted-foreground">{format(new Date(`${date}T12:00:00`), "EEEE, MMMM d")}</p><div className="h-px flex-1 bg-border"/></div><div className="space-y-2">{entries.map((debt) => <DebtRow key={debt.id} debt={debt} currentUser={currentUser} currency={currency} pending={pending} run={run} />)}</div></div>)}</div> : <EmptyLedger onAdd={() => setEntryOpen(true)} canAdd={Boolean(partner)} />}</CardContent>
+          <CardContent>{grouped.length ? <div className="space-y-7">{grouped.map(([date, entries]) => <div key={date}><div className="mb-3 flex items-center gap-3"><p className="text-xs font-bold uppercase tracking-[.16em] text-muted-foreground">{format(new Date(`${date}T12:00:00`), "EEEE, MMMM d")}</p><div className="h-px flex-1 bg-border"/></div><div className="space-y-2">{entries.map((debt) => <DebtRow key={debt.id} debt={debt} currentUser={currentUser} currency={currency} pending={pending} run={run} />)}</div></div>)}</div> : <EmptyLedger onAdd={openEntry} canAdd={Boolean(partner)} />}</CardContent>
         </Card>
       </main>
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-5 py-3 backdrop-blur md:hidden"><div className="mx-auto flex max-w-sm items-center justify-around"><button className="flex flex-col items-center gap-1 text-[11px] font-bold text-primary"><Home className="size-5" />Home</button><button disabled={!partner} onClick={() => setEntryOpen(true)} className="-mt-8 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-50"><Plus className="size-6" /></button><button onClick={() => setSettingsOpen(true)} className="flex flex-col items-center gap-1 text-[11px] font-bold text-muted-foreground"><Settings2 className="size-5" />Settings</button></div></div>
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-5 py-3 backdrop-blur md:hidden"><div className="mx-auto flex max-w-sm items-center justify-around"><button className="flex flex-col items-center gap-1 text-[11px] font-bold text-primary"><Home className="size-5" />Home</button><button disabled={!partner} onClick={openEntry} className="-mt-8 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-50"><Plus className="size-6" /></button><button onClick={() => setSettingsOpen(true)} className="flex flex-col items-center gap-1 text-[11px] font-bold text-muted-foreground"><Settings2 className="size-5" />Settings</button></div></div>
 
-      {entryOpen && partner && <EntryModal currentUser={currentUser} members={members} pending={pending} onClose={() => setEntryOpen(false)} onSubmit={(input) => run(async () => { const result = await createDebt(input); if (result.ok) setEntryOpen(false); return result; })} />}
+      {partner && <EntryModal key={entrySession} open={entryOpen} currentUser={currentUser} partner={partner} currency={currency} pending={pending} onClose={() => setEntryOpen(false)} onSubmit={(input) => run(async () => { const result = await createDebt(input); if (result.ok) setEntryOpen(false); return result; })} />}
       {settingsOpen && <SettingsPanel currentUser={currentUser} household={household} members={members} pending={pending} onClose={() => setSettingsOpen(false)} run={run} />}
     </div>
   );
@@ -129,14 +129,6 @@ function BalanceCard({ currentUser, partner, summary, currency }: { currentUser:
 function DebtRow({ debt, currentUser, currency, pending, run }: { debt: Debt; currentUser: Member; currency: string; pending: boolean; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
   const youBorrowed = debt.borrower.id === currentUser.id;
   return <div className="group flex items-center gap-3 rounded-2xl border border-transparent bg-secondary/45 p-3 transition hover:border-border hover:bg-card sm:gap-4 sm:p-4"><div className={`grid size-11 shrink-0 place-items-center rounded-2xl ${debt.paymentMethod === "CREDIT_CARD" ? "bg-[#e7e2f4] text-[#65548d]" : "bg-[#e1ebda] text-primary"}`}>{debt.paymentMethod === "CREDIT_CARD" ? <CreditCard className="size-5" /> : <Banknote className="size-5" />}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate font-semibold">{debt.itemName}</p><Badge className={debt.status === "PAID" ? "bg-[#dcebdc] text-primary" : "bg-[#f8e4da] text-[#9e4f37]"}>{debt.status === "PAID" ? "Paid" : "Debt"}</Badge></div><p className="mt-1 truncate text-xs text-muted-foreground">{debt.category} · {debt.paymentMethod === "CREDIT_CARD" ? "Credit card" : "Cash"} · {format(new Date(debt.incurredAt), "h:mm a")}</p>{debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}</div><div className="text-right"><p className={`font-display text-base font-bold sm:text-lg ${youBorrowed ? "text-[#a6533b]" : "text-primary"}`}>{youBorrowed ? "−" : "+"}{formatMoney(debt.amount, currency)}</p><p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">{debt.borrower.name.split(" ")[0]} owes {debt.lender.name.split(" ")[0]}</p></div><div className="flex shrink-0 gap-1"><button disabled={pending} aria-label={debt.status === "DEBT" ? "Mark paid" : "Mark unpaid"} onClick={() => run(() => setDebtStatus(debt.id, debt.status === "DEBT" ? "PAID" : "DEBT"))} className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"><Check className="size-4" /></button><button disabled={pending} aria-label="Delete entry" onClick={() => { if (window.confirm(`Delete “${debt.itemName}”?`)) run(() => deleteDebt(debt.id)); }} className="hidden size-9 place-items-center rounded-xl text-muted-foreground hover:bg-red-50 hover:text-red-600 sm:grid"><Trash2 className="size-4" /></button></div></div>;
-}
-
-function EntryModal({ currentUser, members, pending, onClose, onSubmit }: { currentUser: Member; members: Member[]; pending: boolean; onClose: () => void; onSubmit: (input: Record<string, unknown>) => void }) {
-  const partner = members.find((m) => m.id !== currentUser.id)!;
-  const [direction, setDirection] = useState<"BORROWED" | "LENT">("BORROWED");
-  const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-  function submit(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); const data = Object.fromEntries(new FormData(event.currentTarget)); onSubmit({ ...data, lenderId: direction === "BORROWED" ? partner.id : currentUser.id, borrowerId: direction === "BORROWED" ? currentUser.id : partner.id }); }
-  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#10251b]/45 p-0 backdrop-blur-sm sm:items-center sm:p-5" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><div role="dialog" aria-modal="true" className="max-h-[94svh] w-full overflow-y-auto rounded-t-[2rem] bg-card p-5 shadow-2xl sm:max-w-2xl sm:rounded-[2rem] sm:p-7"><div className="mb-6 flex items-start justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-primary">New transaction</p><h2 className="mt-1 font-display text-2xl font-semibold">Add an entry</h2></div><button onClick={onClose} className="grid size-10 place-items-center rounded-full bg-secondary"><X className="size-5" /></button></div><form onSubmit={submit} className="space-y-5"><div><label className="mb-2 block text-sm font-semibold">Who borrowed?</label><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setDirection("BORROWED")} className={`rounded-2xl border p-3 text-left text-sm transition ${direction === "BORROWED" ? "border-primary bg-[#e9f1e7] ring-2 ring-primary/10" : "border-border"}`}><span className="font-bold">I borrowed</span><span className="mt-1 block text-xs text-muted-foreground">from {partner.name.split(" ")[0]}</span></button><button type="button" onClick={() => setDirection("LENT")} className={`rounded-2xl border p-3 text-left text-sm transition ${direction === "LENT" ? "border-primary bg-[#e9f1e7] ring-2 ring-primary/10" : "border-border"}`}><span className="font-bold">{partner.name.split(" ")[0]} borrowed</span><span className="mt-1 block text-xs text-muted-foreground">from me</span></button></div></div><div className="grid gap-4 sm:grid-cols-[1fr_.55fr]"><Field label="Item name"><Input name="itemName" required placeholder="Dinner, groceries, new shoes…" autoFocus /></Field><Field label="Amount"><Input name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00" /></Field></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Category"><Select name="category">{categories.map((c) => <option key={c}>{c}</option>)}</Select></Field><Field label="Paid with"><Select name="paymentMethod"><option value="CREDIT_CARD">Credit card</option><option value="CASH">Cash</option></Select></Field></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Date & time"><Input name="incurredAt" type="datetime-local" required defaultValue={now.toISOString().slice(0,16)} /></Field><Field label="Status"><Select name="status"><option value="DEBT">Still a debt</option><option value="PAID">Already paid</option></Select></Field></div><Field label="Notes" optional><Textarea name="notes" placeholder="Add context, receipt details, or anything to remember…" /></Field><div className="flex gap-3 pt-1"><Button type="button" variant="outline" size="lg" onClick={onClose} className="flex-1">Cancel</Button><Button type="submit" size="lg" disabled={pending} className="flex-[1.4]">{pending ? <LoaderCircle className="size-4 animate-spin" /> : <ReceiptText className="size-4" />}Save entry</Button></div></form></div></div>;
 }
 
 function SettingsPanel({ currentUser, household, members, pending, onClose, run }: { currentUser: Member; household: Props["household"]; members: Member[]; pending: boolean; onClose: () => void; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
