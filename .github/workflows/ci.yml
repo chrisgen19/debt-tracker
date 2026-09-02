@@ -23,3 +23,21 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+
+  # Coolify's own auto-deploy is turned off for this app, so `main` reaches
+  # production only through this job, which runs only after verify passes.
+  deploy:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify deployment
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_DEPLOY_WEBHOOK }}
+          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          status=$(curl -sS -o body.json -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" "$WEBHOOK")
+          cat body.json
+          echo
+          test "$status" = "200" || { echo "Coolify returned HTTP $status"; exit 1; }
