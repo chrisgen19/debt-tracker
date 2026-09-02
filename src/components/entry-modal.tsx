@@ -120,6 +120,7 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
   return (
     <dialog ref={dialogRef} onClose={onClose} aria-labelledby="entry-title" className="sheet">
       <form
+        method="post"
         onSubmit={submit}
         onKeyDown={(event) => {
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {

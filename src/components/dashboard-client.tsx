@@ -314,7 +314,7 @@ function SettingsPanel({ currentUser, household, members, categories, pending, o
           ) : <p className="border-t border-primary/10 pt-4 text-sm text-muted-foreground">Your partner hasn’t joined yet.</p>}
         </section>
 
-        <form onSubmit={save} className="space-y-4">
+        <form method="post" onSubmit={save} className="space-y-4">
           <Field label="Household name"><Input name="name" defaultValue={household.name} /></Field>
           <Field label="Currency">
             <Select name="currency" defaultValue={household.currency}>
