@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EntryModal } from "@/components/entry-modal";
 import { CategorySettings } from "@/components/category-settings";
+import { SummaryCarousel } from "@/components/summary-carousel";
 
 type Member = { id: string; name: string; email: string };
 type Debt = {
@@ -85,11 +86,15 @@ export function DashboardClient(props: Props) {
           <div className="flex items-center justify-between gap-1 rounded-2xl border border-border bg-card p-1.5 shadow-sm"><button aria-label="Previous month" onClick={() => goToMonth(month.previous)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowLeft className="size-4" /></button><button onClick={() => goToMonth(format(new Date(), "yyyy-MM"))} className="min-w-36 px-2 text-sm font-bold"><CalendarDays className="mr-2 inline size-4 text-primary" />{month.label}</button><button aria-label="Next month" onClick={() => goToMonth(month.next)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowRight className="size-4" /></button></div>
         </section>
 
-        <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard label="You owe this month" value={summary.youOwe} currency={currency} icon={ArrowUpIcon} tone="peach" detail={`${formatMoney(summary.allTimeYouOwe, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} />
-          <SummaryCard label="Owed to you this month" value={summary.owedToYou} currency={currency} icon={ArrowDownLeft} tone="green" detail={`${formatMoney(summary.allTimeOwedToYou, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} />
-          <SummaryCard label="You paid this month" value={summary.paidByYou} currency={currency} icon={CheckCircle2} tone="blue" detail="Payments completed" />
-          <SummaryCard label="Paid back to you" value={summary.paidToYou} currency={currency} icon={WalletCards} tone="gold" detail="Money returned" />
+        <section className="mb-6">
+          <SummaryCarousel
+            items={[
+              { key: "you-owe", label: "You owe this month", node: <SummaryCard label="You owe this month" value={summary.youOwe} currency={currency} icon={ArrowUpIcon} tone="peach" detail={`${formatMoney(summary.allTimeYouOwe, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} /> },
+              { key: "owed-to-you", label: "Owed to you this month", node: <SummaryCard label="Owed to you this month" value={summary.owedToYou} currency={currency} icon={ArrowDownLeft} tone="green" detail={`${formatMoney(summary.allTimeOwedToYou, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} /> },
+              { key: "you-paid", label: "You paid this month", node: <SummaryCard label="You paid this month" value={summary.paidByYou} currency={currency} icon={CheckCircle2} tone="blue" detail="Payments completed" /> },
+              { key: "paid-to-you", label: "Paid back to you", node: <SummaryCard label="Paid back to you" value={summary.paidToYou} currency={currency} icon={WalletCards} tone="gold" detail="Money returned" /> },
+            ]}
+          />
         </section>
 
         <section className="mb-6 grid gap-6 xl:grid-cols-[1.55fr_.85fr]">

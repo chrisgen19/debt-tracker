@@ -88,3 +88,28 @@ dialog.sheet[open] .sheet-panel { transform: none; }
   dialog.sheet, dialog.sheet::backdrop { transition-duration: .01ms; }
   .sheet-panel, dialog.sheet[open] .sheet-panel { transform: none; transition: none; }
 }
+
+/* Summary rail: a scroll-snap carousel on phones, a plain grid from `sm` up.
+   `overscroll-behavior-x: contain` keeps a swipe past the last card from
+   triggering the browser's back gesture. */
+.snap-rail { scrollbar-width: none; overscroll-behavior-x: contain; }
+.snap-rail::-webkit-scrollbar { display: none; }
+
+@media (max-width: 639px) {
+  .snap-rail > * { container-type: scroll-state; }
+
+  /* Progressive enhancement (Chromium today): the snapped card sits forward and
+     the peeking neighbours recede. Everywhere else every card stays fully legible. */
+  @supports (container-type: scroll-state) {
+    @media (prefers-reduced-motion: no-preference) {
+      .snap-rail > * > * {
+        opacity: .55;
+        scale: .97;
+        transition: opacity .3s ease, scale .3s cubic-bezier(.32, .72, 0, 1);
+      }
+      @container scroll-state(snapped: x) {
+        .snap-rail > * > * { opacity: 1; scale: 1; }
+      }
+    }
+  }
+}
