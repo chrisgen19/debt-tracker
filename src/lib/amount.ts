@@ -6,9 +6,9 @@ function localeDecimalSeparator() {
 
 /**
  * Normalizes typed or pasted money into the dot-decimal representation stored
- * by the form. The rightmost separator wins when both `,` and `.` are present;
- * a lone comma follows the device locale, while obvious three-digit grouping
- * remains grouping in dot-decimal locales.
+ * by the form. The rightmost separator wins when both `,` and `.` are present.
+ * With only one separator style, the device locale identifies decimals while
+ * a non-locale separator followed by three digits is treated as grouping.
  */
 export function sanitizeAmount(raw: string, decimalSeparator = localeDecimalSeparator()) {
   const clean = raw.replace(/[^\d.,]/g, "");
@@ -18,16 +18,17 @@ export function sanitizeAmount(raw: string, decimalSeparator = localeDecimalSepa
 
   if (lastDot >= 0 && lastComma >= 0) {
     decimalIndex = Math.max(lastDot, lastComma);
-  } else if (lastDot >= 0) {
-    decimalIndex = lastDot;
-  } else if (lastComma >= 0) {
-    const fractionLength = clean.length - lastComma - 1;
+  } else if (lastDot >= 0 || lastComma >= 0) {
+    const separatorIndex = Math.max(lastDot, lastComma);
+    const separator = clean[separatorIndex];
+    const fractionLength = clean.length - separatorIndex - 1;
     const looksLikeDecimal = fractionLength <= 2;
-    decimalIndex = decimalSeparator === "," || looksLikeDecimal ? lastComma : -1;
+    decimalIndex = separator === decimalSeparator || looksLikeDecimal ? separatorIndex : -1;
   }
 
   const wholeSource = decimalIndex >= 0 ? clean.slice(0, decimalIndex) : clean;
-  const whole = wholeSource.replace(/\D/g, "").slice(0, 9);
+  const wholeDigits = wholeSource.replace(/\D/g, "");
+  const whole = wholeDigits.replace(/^0+(?=\d)/, "").slice(0, 9);
   if (decimalIndex < 0) return whole;
 
   const fraction = clean.slice(decimalIndex + 1).replace(/\D/g, "").slice(0, 2);

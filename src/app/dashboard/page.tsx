@@ -1,5 +1,6 @@
 import { addMonths, endOfMonth, format, isValid, parse } from "date-fns";
 import { prisma } from "@/lib/prisma";
+import { normalizeCategories } from "@/lib/categories";
 import { requireUser } from "@/lib/session";
 import { DashboardClient } from "@/components/dashboard-client";
 
@@ -65,6 +66,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
       currentUser={{ id: user.id, name: user.name, email: user.email }}
       household={{ id: user.household!.id, name: user.household!.name, inviteCode: user.household!.inviteCode, currency: user.household!.currency }}
       members={user.household!.members.map((member) => ({ id: member.id, name: member.name, email: member.email }))}
+      categories={normalizeCategories(user.household!.categoryConfig)}
       debts={debts}
       month={{ key: format(start, "yyyy-MM"), label: format(start, "MMMM yyyy"), previous: format(addMonths(start, -1), "yyyy-MM"), next: format(addMonths(start, 1), "yyyy-MM") }}
       summary={{ youOwe, owedToYou, paidByYou: Number(paidByMe._sum.amount ?? 0), paidToYou: Number(paidToMe._sum.amount ?? 0), allTimeYouOwe, allTimeOwedToYou }}

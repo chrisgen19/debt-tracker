@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { sanitizeAmount } from "@/lib/amount";
+import type { CategoryOption } from "@/lib/categories";
 import { currencySymbol, initials } from "@/lib/utils";
 
 type Person = { id: string; name: string };
@@ -18,22 +19,32 @@ type Props = {
   currentUser: Person;
   partner: Person;
   currency: string;
+  categories: CategoryOption[];
   pending: boolean;
   onClose: () => void;
   onSubmit: (input: Record<string, unknown>) => void;
 };
 
-/** Categories carry their own icon, tint and starter suggestions so picking one is a single tap. */
-const CATEGORIES = [
-  { name: "Food", icon: UtensilsCrossed, tint: "bg-[#f8e4da] text-[#9e4f37]", ideas: ["Dinner", "Lunch", "Coffee", "Merienda"] },
-  { name: "Groceries", icon: ShoppingBasket, tint: "bg-[#dcebdc] text-[#315f46]", ideas: ["Groceries", "Market run", "Water gallon"] },
-  { name: "Bills", icon: Zap, tint: "bg-[#f5e9c9] text-[#80621f]", ideas: ["Electricity", "Water", "Internet", "Rent"] },
-  { name: "Shopping", icon: ShoppingBag, tint: "bg-[#e7e2f4] text-[#65548d]", ideas: ["Clothes", "Shoes", "Gadget"] },
-  { name: "Travel", icon: Plane, tint: "bg-[#dfeaec] text-[#37616c]", ideas: ["Grab", "Gas", "Fare", "Hotel"] },
-  { name: "Health", icon: HeartPulse, tint: "bg-[#f7dfe0] text-[#9b4a4f]", ideas: ["Medicine", "Check-up", "Vitamins"] },
-  { name: "Home", icon: House, tint: "bg-[#e3e9d9] text-[#5b6b3a]", ideas: ["Repairs", "Furniture", "Cleaning"] },
-  { name: "Other", icon: Shapes, tint: "bg-[#e7e6df] text-[#5f6259]", ideas: ["Gift", "Loan", "Misc"] },
+const CATEGORY_VISUALS = {
+  Food: { icon: UtensilsCrossed, tint: "bg-[#f8e4da] text-[#9e4f37]" },
+  Groceries: { icon: ShoppingBasket, tint: "bg-[#dcebdc] text-[#315f46]" },
+  Bills: { icon: Zap, tint: "bg-[#f5e9c9] text-[#80621f]" },
+  Shopping: { icon: ShoppingBag, tint: "bg-[#e7e2f4] text-[#65548d]" },
+  Travel: { icon: Plane, tint: "bg-[#dfeaec] text-[#37616c]" },
+  Health: { icon: HeartPulse, tint: "bg-[#f7dfe0] text-[#9b4a4f]" },
+  Home: { icon: House, tint: "bg-[#e3e9d9] text-[#5b6b3a]" },
+  Other: { icon: Shapes, tint: "bg-[#e7e6df] text-[#5f6259]" },
+} as const;
+
+const CUSTOM_VISUALS = [
+  { icon: Shapes, tint: "bg-[#e7e6df] text-[#5f6259]" },
+  { icon: ReceiptText, tint: "bg-[#dfeaec] text-[#37616c]" },
+  { icon: ShoppingBag, tint: "bg-[#e7e2f4] text-[#65548d]" },
 ] as const;
+
+function categoryVisual(name: string, index: number) {
+  return CATEGORY_VISUALS[name as keyof typeof CATEGORY_VISUALS] ?? CUSTOM_VISUALS[index % CUSTOM_VISUALS.length];
+}
 
 /** datetime-local wants a local wall-clock string, not the UTC that toISOString gives back. */
 function toLocalInput(date: Date) {
@@ -42,12 +53,13 @@ function toLocalInput(date: Date) {
   return local.toISOString().slice(0, 16);
 }
 
-export function EntryModal({ open, currentUser, partner, currency, pending, onClose, onSubmit }: Props) {
+export function EntryModal({ open, currentUser, partner, currency, categories, pending, onClose, onSubmit }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [direction, setDirection] = useState<Direction>("BORROWED");
   const [amount, setAmount] = useState("");
   const [itemName, setItemName] = useState("");
-  const [category, setCategory] = useState<string>(CATEGORIES[0].name);
+  const [category, setCategory] = useState<string>(categories[0]?.name ?? "Other");
+  const [selectedQuickPick, setSelectedQuickPick] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CREDIT_CARD">("CREDIT_CARD");
   const [incurredAt, setIncurredAt] = useState(() => toLocalInput(new Date()));
   const [settled, setSettled] = useState(false);
@@ -57,7 +69,7 @@ export function EntryModal({ open, currentUser, partner, currency, pending, onCl
   const symbol = useMemo(() => currencySymbol(currency), [currency]);
   const numericAmount = Number(amount || 0);
   const canSave = numericAmount > 0 && itemName.trim().length >= 2 && !pending;
-  const active = CATEGORIES.find((entry) => entry.name === category) ?? CATEGORIES[0];
+  const active = categories.find((entry) => entry.name === category) ?? categories[0];
 
   // Drive the native dialog from the `open` prop. showModal() gives us the top layer,
   // focus trapping and Esc handling for free, and keeping the node mounted lets the
@@ -123,37 +135,25 @@ export function EntryModal({ open, currentUser, partner, currency, pending, onCl
           symbol={symbol} settled={settled} onClose={onClose}
         />
 
-        <div className="flex-1 space-y-6 overflow-y-auto px-5 py-6 sm:px-7">
-          <section>
-            <Legend>What was it?</Legend>
-            <input
-              value={itemName}
-              onChange={(event) => setItemName(event.target.value)}
-              placeholder={`${active.ideas[0]}…`}
-              maxLength={100}
-              className="h-12 w-full rounded-xl border border-input bg-background px-4 text-base font-medium outline-none placeholder:font-normal placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/10"
-            />
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {active.ideas.map((idea) => (
-                <button
-                  key={idea} type="button" onClick={() => setItemName(idea)}
-                  className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:border-primary/40 hover:bg-secondary hover:text-foreground"
-                >
-                  {idea}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <Legend>Category</Legend>
-            <div className="grid grid-cols-4 gap-2">
-              {CATEGORIES.map(({ name, icon: Icon, tint }) => {
+        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-6 sm:px-7">
+          <section className="rounded-3xl border border-border bg-secondary/20 p-4 sm:p-5">
+            <StepLegend step="1" title="Choose a category">This sets the quick picks shown next.</StepLegend>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {categories.map(({ name }, index) => {
+                const { icon: Icon, tint } = categoryVisual(name, index);
                 const selected = name === category;
                 return (
                   <button
-                    key={name} type="button" onClick={() => setCategory(name)} aria-pressed={selected}
-                    className={`flex min-w-0 flex-col items-center gap-1.5 rounded-2xl border p-2 text-[11px] font-bold transition sm:p-2.5 ${selected ? "border-primary/40 bg-secondary/60 ring-2 ring-primary/10" : "border-transparent hover:bg-secondary/50"}`}
+                    key={name}
+                    type="button"
+                    onClick={() => {
+                      if (name === category) return;
+                      setCategory(name);
+                      if (selectedQuickPick) setItemName("");
+                      setSelectedQuickPick(null);
+                    }}
+                    aria-pressed={selected}
+                    className={`flex min-w-0 flex-col items-center gap-1.5 rounded-2xl border bg-card p-2 text-[11px] font-bold transition sm:p-2.5 ${selected ? "border-primary/40 shadow-sm ring-2 ring-primary/10" : "border-border/70 text-muted-foreground hover:border-primary/20 hover:bg-secondary/50"}`}
                   >
                     <span className={`grid size-9 place-items-center rounded-xl transition ${selected ? tint : "bg-secondary text-muted-foreground"}`}>
                       <Icon className="size-[18px]" />
@@ -163,6 +163,41 @@ export function EntryModal({ open, currentUser, partner, currency, pending, onCl
                 );
               })}
             </div>
+          </section>
+
+          <section className="rounded-3xl border border-border p-4 sm:p-5">
+            <StepLegend step="2" title="What was it?">Pick a suggestion or enter your own description.</StepLegend>
+            <input
+              value={itemName}
+              onChange={(event) => {
+                setItemName(event.target.value);
+                setSelectedQuickPick(null);
+              }}
+              placeholder={active?.ideas[0] ? `e.g. ${active.ideas[0]}` : "What did you buy?"}
+              maxLength={100}
+              className="h-12 w-full rounded-2xl border border-input bg-background px-4 text-base font-medium outline-none placeholder:font-normal placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/10"
+            />
+            {active && active.ideas.length > 0 && (
+              <div className="mt-3">
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-[.12em] text-muted-foreground">Quick picks for {active.name}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {active.ideas.map((idea) => {
+                    const selected = selectedQuickPick === idea;
+                    return (
+                      <button
+                        key={idea}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => { setItemName(idea); setSelectedQuickPick(idea); }}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${selected ? "border-primary/35 bg-[#eef4ed] text-primary ring-1 ring-primary/10" : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-secondary hover:text-foreground"}`}
+                      >
+                        {idea}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </section>
 
           <div className="grid gap-6 sm:grid-cols-2">
@@ -349,4 +384,16 @@ function WhenPicker({ value, onChange }: { value: string; onChange: (value: stri
 
 function Legend({ children }: { children: React.ReactNode }) {
   return <p className="mb-2 text-xs font-bold uppercase tracking-[.14em] text-muted-foreground">{children}</p>;
+}
+
+function StepLegend({ step, title, children }: { step: string; title: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-4 flex items-start gap-3">
+      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-primary text-xs font-bold text-primary-foreground">{step}</span>
+      <div>
+        <h3 className="text-sm font-bold">{title}</h3>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{children}</p>
+      </div>
+    </div>
+  );
 }

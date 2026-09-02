@@ -7,7 +7,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test src/lib/amount.test.ts",
+    "test": "tsx --test src/lib/*.test.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

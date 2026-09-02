@@ -11,13 +11,15 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
-import { createDebt, deleteDebt, joinHousehold, setDebtStatus, updateHousehold } from "@/app/actions";
+import { createDebt, deleteDebt, joinHousehold, setDebtStatus, updateCategoryConfig, updateHousehold } from "@/app/actions";
 import { formatMoney, initials } from "@/lib/utils";
+import type { CategoryOption } from "@/lib/categories";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EntryModal } from "@/components/entry-modal";
+import { CategorySettings } from "@/components/category-settings";
 
 type Member = { id: string; name: string; email: string };
 type Debt = {
@@ -29,6 +31,7 @@ type Props = {
   currentUser: Member;
   household: { id: string; name: string; inviteCode: string; currency: string };
   members: Member[];
+  categories: CategoryOption[];
   debts: Debt[];
   month: { key: string; label: string; previous: string; next: string };
   summary: { youOwe: number; owedToYou: number; paidByYou: number; paidToYou: number; allTimeYouOwe: number; allTimeOwedToYou: number };
@@ -36,7 +39,7 @@ type Props = {
 };
 
 export function DashboardClient(props: Props) {
-  const { currentUser, household, members, debts, month, summary, chart } = props;
+  const { currentUser, household, members, categories, debts, month, summary, chart } = props;
   const router = useRouter();
   const [entryOpen, setEntryOpen] = useState(false);
   const [entrySession, setEntrySession] = useState(0);
@@ -108,8 +111,8 @@ export function DashboardClient(props: Props) {
 
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-5 py-3 backdrop-blur md:hidden"><div className="mx-auto flex max-w-sm items-center justify-around"><button className="flex flex-col items-center gap-1 text-[11px] font-bold text-primary"><Home className="size-5" />Home</button><button disabled={!partner} onClick={openEntry} className="-mt-8 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-50"><Plus className="size-6" /></button><button onClick={() => setSettingsOpen(true)} className="flex flex-col items-center gap-1 text-[11px] font-bold text-muted-foreground"><Settings2 className="size-5" />Settings</button></div></div>
 
-      {partner && <EntryModal key={entrySession} open={entryOpen} currentUser={currentUser} partner={partner} currency={currency} pending={pending} onClose={() => setEntryOpen(false)} onSubmit={(input) => run(async () => { const result = await createDebt(input); if (result.ok) setEntryOpen(false); return result; })} />}
-      {settingsOpen && <SettingsPanel currentUser={currentUser} household={household} members={members} pending={pending} onClose={() => setSettingsOpen(false)} run={run} />}
+      {partner && <EntryModal key={entrySession} open={entryOpen} currentUser={currentUser} partner={partner} currency={currency} categories={categories} pending={pending} onClose={() => setEntryOpen(false)} onSubmit={(input) => run(async () => { const result = await createDebt(input); if (result.ok) setEntryOpen(false); return result; })} />}
+      {settingsOpen && <SettingsPanel currentUser={currentUser} household={household} members={members} categories={categories} pending={pending} onClose={() => setSettingsOpen(false)} run={run} />}
     </div>
   );
 }
@@ -131,13 +134,69 @@ function DebtRow({ debt, currentUser, currency, pending, run }: { debt: Debt; cu
   return <div className="group flex items-center gap-3 rounded-2xl border border-transparent bg-secondary/45 p-3 transition hover:border-border hover:bg-card sm:gap-4 sm:p-4"><div className={`grid size-11 shrink-0 place-items-center rounded-2xl ${debt.paymentMethod === "CREDIT_CARD" ? "bg-[#e7e2f4] text-[#65548d]" : "bg-[#e1ebda] text-primary"}`}>{debt.paymentMethod === "CREDIT_CARD" ? <CreditCard className="size-5" /> : <Banknote className="size-5" />}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate font-semibold">{debt.itemName}</p><Badge className={debt.status === "PAID" ? "bg-[#dcebdc] text-primary" : "bg-[#f8e4da] text-[#9e4f37]"}>{debt.status === "PAID" ? "Paid" : "Debt"}</Badge></div><p className="mt-1 truncate text-xs text-muted-foreground">{debt.category} · {debt.paymentMethod === "CREDIT_CARD" ? "Credit card" : "Cash"} · {format(new Date(debt.incurredAt), "h:mm a")}</p>{debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}</div><div className="text-right"><p className={`font-display text-base font-bold sm:text-lg ${youBorrowed ? "text-[#a6533b]" : "text-primary"}`}>{youBorrowed ? "−" : "+"}{formatMoney(debt.amount, currency)}</p><p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">{debt.borrower.name.split(" ")[0]} owes {debt.lender.name.split(" ")[0]}</p></div><div className="flex shrink-0 gap-1"><button disabled={pending} aria-label={debt.status === "DEBT" ? "Mark paid" : "Mark unpaid"} onClick={() => run(() => setDebtStatus(debt.id, debt.status === "DEBT" ? "PAID" : "DEBT"))} className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"><Check className="size-4" /></button><button disabled={pending} aria-label="Delete entry" onClick={() => { if (window.confirm(`Delete “${debt.itemName}”?`)) run(() => deleteDebt(debt.id)); }} className="hidden size-9 place-items-center rounded-xl text-muted-foreground hover:bg-red-50 hover:text-red-600 sm:grid"><Trash2 className="size-4" /></button></div></div>;
 }
 
-function SettingsPanel({ currentUser, household, members, pending, onClose, run }: { currentUser: Member; household: Props["household"]; members: Member[]; pending: boolean; onClose: () => void; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
+function SettingsPanel({ currentUser, household, members, categories, pending, onClose, run }: { currentUser: Member; household: Props["household"]; members: Member[]; categories: CategoryOption[]; pending: boolean; onClose: () => void; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
   const partner = members.find((m) => m.id !== currentUser.id);
   function save(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); run(() => updateHousehold({ name: String(data.get("name")), currency: String(data.get("currency")) })); }
   async function copy() { await navigator.clipboard.writeText(household.inviteCode); setCopied(true); toast.success("Invite code copied"); setTimeout(() => setCopied(false), 1600); }
-  return <div className="fixed inset-0 z-50 bg-[#10251b]/40 backdrop-blur-sm" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="ml-auto flex h-full w-full max-w-md flex-col overflow-y-auto bg-card p-6 shadow-2xl sm:p-8"><div className="mb-8 flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-primary">Your space</p><h2 className="mt-1 font-display text-2xl font-semibold">Household settings</h2></div><button onClick={onClose} className="grid size-10 place-items-center rounded-full bg-secondary"><X className="size-5" /></button></div><section className="mb-8 rounded-3xl bg-[#eef4ed] p-5"><div className="mb-4 flex items-center gap-3"><div className="grid size-11 place-items-center rounded-full bg-[#dcebdc] font-bold text-primary">{initials(currentUser.name)}</div><div><p className="font-semibold">{currentUser.name}</p><p className="text-xs text-muted-foreground">{currentUser.email}</p></div></div>{partner ? <div className="flex items-center gap-3 border-t border-primary/10 pt-4"><div className="grid size-11 place-items-center rounded-full bg-[#f4dfd5] font-bold text-[#9e4f37]">{initials(partner.name)}</div><div><p className="font-semibold">{partner.name}</p><p className="text-xs text-muted-foreground">Partner · {partner.email}</p></div></div> : <p className="border-t border-primary/10 pt-4 text-sm text-muted-foreground">Your partner hasn’t joined yet.</p>}</section><form onSubmit={save} className="space-y-4"><Field label="Household name"><Input name="name" defaultValue={household.name} /></Field><Field label="Currency"><Select name="currency" defaultValue={household.currency}>{["USD","PHP","CNY","EUR","GBP","AUD","CAD","SGD"].map(c => <option key={c}>{c}</option>)}</Select></Field><Button disabled={pending} type="submit" className="w-full">Save settings</Button></form><div className="my-8 h-px bg-border"/><div><p className="font-semibold">Partner invite code</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Your partner creates their own account, then enters this code.</p><button onClick={copy} className="mt-3 flex w-full items-center justify-between rounded-2xl border border-dashed border-primary/30 bg-[#eef4ed] px-4 py-4"><span className="font-mono text-lg font-bold tracking-[.18em] text-primary">{household.inviteCode}</span><span className="text-xs font-bold text-primary">{copied ? "Copied!" : "Copy code"}</span></button></div><div className="mt-auto pt-10"><Button variant="outline" className="w-full text-red-600" onClick={async () => { await authClient.signOut(); router.push("/login"); router.refresh(); }}><LogOut className="size-4" />Sign out</Button></div></aside></div>;
+  return (
+    <div className="fixed inset-0 z-50 bg-[#10251b]/40 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <aside className="ml-auto flex h-full w-full max-w-lg flex-col overflow-y-auto bg-card p-6 shadow-2xl sm:p-8">
+        <div className="mb-8 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[.18em] text-primary">Your space</p>
+            <h2 className="mt-1 font-display text-2xl font-semibold">Household settings</h2>
+          </div>
+          <button aria-label="Close settings" onClick={onClose} className="grid size-10 place-items-center rounded-full bg-secondary">
+            <X className="size-5" />
+          </button>
+        </div>
+
+        <section className="mb-8 rounded-3xl bg-[#eef4ed] p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="grid size-11 place-items-center rounded-full bg-[#dcebdc] font-bold text-primary">{initials(currentUser.name)}</div>
+            <div className="min-w-0"><p className="font-semibold">{currentUser.name}</p><p className="truncate text-xs text-muted-foreground">{currentUser.email}</p></div>
+          </div>
+          {partner ? (
+            <div className="flex items-center gap-3 border-t border-primary/10 pt-4">
+              <div className="grid size-11 place-items-center rounded-full bg-[#f4dfd5] font-bold text-[#9e4f37]">{initials(partner.name)}</div>
+              <div className="min-w-0"><p className="font-semibold">{partner.name}</p><p className="truncate text-xs text-muted-foreground">Partner · {partner.email}</p></div>
+            </div>
+          ) : <p className="border-t border-primary/10 pt-4 text-sm text-muted-foreground">Your partner hasn’t joined yet.</p>}
+        </section>
+
+        <form onSubmit={save} className="space-y-4">
+          <Field label="Household name"><Input name="name" defaultValue={household.name} /></Field>
+          <Field label="Currency">
+            <Select name="currency" defaultValue={household.currency}>
+              {["USD", "PHP", "CNY", "EUR", "GBP", "AUD", "CAD", "SGD"].map((currency) => <option key={currency}>{currency}</option>)}
+            </Select>
+          </Field>
+          <Button disabled={pending} type="submit" className="w-full">Save household</Button>
+        </form>
+
+        <div className="my-8 h-px bg-border" />
+        <CategorySettings categories={categories} pending={pending} onSave={(next) => run(() => updateCategoryConfig(next))} />
+
+        <div className="my-8 h-px bg-border" />
+        <section>
+          <p className="font-semibold">Partner invite code</p>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">Your partner creates their own account, then enters this code.</p>
+          <button type="button" onClick={copy} className="mt-3 flex w-full items-center justify-between rounded-2xl border border-dashed border-primary/30 bg-[#eef4ed] px-4 py-4">
+            <span className="font-mono text-lg font-bold tracking-[.18em] text-primary">{household.inviteCode}</span>
+            <span className="text-xs font-bold text-primary">{copied ? "Copied!" : "Copy code"}</span>
+          </button>
+        </section>
+
+        <div className="mt-auto pt-10">
+          <Button variant="outline" className="w-full text-red-600" onClick={async () => { await authClient.signOut(); router.push("/login"); router.refresh(); }}>
+            <LogOut className="size-4" /> Sign out
+          </Button>
+        </div>
+      </aside>
+    </div>
+  );
 }
 
 function InviteBanner({ household, pending, onJoin }: { household: Props["household"]; pending: boolean; onJoin: (code: string) => void }) {
