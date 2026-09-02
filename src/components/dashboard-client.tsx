@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EntryModal } from "@/components/entry-modal";
 import { CategorySettings } from "@/components/category-settings";
+import { SummaryCarousel } from "@/components/summary-carousel";
 
 type Member = { id: string; name: string; email: string };
 type Debt = {
@@ -85,11 +86,15 @@ export function DashboardClient(props: Props) {
           <div className="flex items-center justify-between gap-1 rounded-2xl border border-border bg-card p-1.5 shadow-sm"><button aria-label="Previous month" onClick={() => goToMonth(month.previous)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowLeft className="size-4" /></button><button onClick={() => goToMonth(format(new Date(), "yyyy-MM"))} className="min-w-36 px-2 text-sm font-bold"><CalendarDays className="mr-2 inline size-4 text-primary" />{month.label}</button><button aria-label="Next month" onClick={() => goToMonth(month.next)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowRight className="size-4" /></button></div>
         </section>
 
-        <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard label="You owe this month" value={summary.youOwe} currency={currency} icon={ArrowUpIcon} tone="peach" detail={`${formatMoney(summary.allTimeYouOwe, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} />
-          <SummaryCard label="Owed to you this month" value={summary.owedToYou} currency={currency} icon={ArrowDownLeft} tone="green" detail={`${formatMoney(summary.allTimeOwedToYou, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} />
-          <SummaryCard label="You paid this month" value={summary.paidByYou} currency={currency} icon={CheckCircle2} tone="blue" detail="Payments completed" />
-          <SummaryCard label="Paid back to you" value={summary.paidToYou} currency={currency} icon={WalletCards} tone="gold" detail="Money returned" />
+        <section className="mb-6">
+          <SummaryCarousel
+            items={[
+              { key: "you-owe", label: "You owe this month", node: <SummaryCard label="You owe this month" value={summary.youOwe} currency={currency} icon={ArrowUpIcon} tone="peach" detail={`${formatMoney(summary.allTimeYouOwe, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} /> },
+              { key: "owed-to-you", label: "Owed to you this month", node: <SummaryCard label="Owed to you this month" value={summary.owedToYou} currency={currency} icon={ArrowDownLeft} tone="green" detail={`${formatMoney(summary.allTimeOwedToYou, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} /> },
+              { key: "you-paid", label: "You paid this month", node: <SummaryCard label="You paid this month" value={summary.paidByYou} currency={currency} icon={CheckCircle2} tone="blue" detail="Payments completed" /> },
+              { key: "paid-to-you", label: "Paid back to you", node: <SummaryCard label="Paid back to you" value={summary.paidToYou} currency={currency} icon={WalletCards} tone="gold" detail="Money returned" /> },
+            ]}
+          />
         </section>
 
         <section className="mb-6 grid gap-6 xl:grid-cols-[1.55fr_.85fr]">
@@ -126,7 +131,7 @@ function ArrowUpIcon(props: React.ComponentProps<typeof ArrowDownRight>) { retur
 
 function SummaryCard({ label, value, currency, icon: Icon, tone, detail, onDetailClick }: { label: string; value: number; currency: string; icon: React.ElementType; tone: string; detail: string; onDetailClick?: () => void }) {
   const tones: Record<string, string> = { peach: "bg-[#f8e4da] text-[#9e4f37]", green: "bg-[#dcebdc] text-primary", blue: "bg-[#dfeaec] text-[#37616c]", gold: "bg-[#f5e9c9] text-[#80621f]" };
-  return <Card className="p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p>{onDetailClick ? <button type="button" onClick={onDetailClick} className="mt-3 text-left text-xs font-bold text-primary hover:underline">{detail} · View all unpaid</button> : <p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p>}</Card>;
+  return <Card className="h-full p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p>{onDetailClick ? <button type="button" onClick={onDetailClick} className="mt-3 text-left text-xs font-bold text-primary hover:underline">{detail} · View all unpaid</button> : <p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p>}</Card>;
 }
 
 function LedgerCard({ mode, month, monthlyDebts, openDebts, openDebtCount, currentUser, currency, summary, pending, canAdd, onModeChange, onAdd, run }: {
