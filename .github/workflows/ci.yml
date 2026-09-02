@@ -36,7 +36,7 @@ jobs:
           WEBHOOK: ${{ secrets.COOLIFY_DEPLOY_WEBHOOK }}
           TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
-          status=$(curl -sS -o body.json -w '%{http_code}' \
+          status=$(curl -sS -X POST -o body.json -w '%{http_code}' \
             -H "Authorization: Bearer $TOKEN" "$WEBHOOK")
           cat body.json
           echo
