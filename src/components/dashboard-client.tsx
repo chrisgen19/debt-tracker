@@ -1,0 +1,158 @@
+"use client";
+
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { format } from "date-fns";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import {
+  ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight, Banknote, CalendarDays, Check, CheckCircle2,
+  ChevronDown, CreditCard, Ellipsis, HandCoins, Home, LayoutDashboard, LoaderCircle, LogOut,
+  Plus, ReceiptText, Search, Settings2, Trash2, UserPlus, Users, WalletCards, X,
+} from "lucide-react";
+import { toast } from "sonner";
+import { authClient } from "@/lib/auth-client";
+import { createDebt, deleteDebt, joinHousehold, setDebtStatus, updateHousehold } from "@/app/actions";
+import { formatMoney, initials } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+
+type Member = { id: string; name: string; email: string };
+type Debt = {
+  id: string; itemName: string; amount: number; category: string; paymentMethod: "CASH" | "CREDIT_CARD";
+  notes: string | null; incurredAt: string; status: "DEBT" | "PAID"; paidAt: string | null;
+  lender: Pick<Member, "id" | "name">; borrower: Pick<Member, "id" | "name">;
+};
+type Props = {
+  currentUser: Member;
+  household: { id: string; name: string; inviteCode: string; currency: string };
+  members: Member[];
+  debts: Debt[];
+  month: { key: string; label: string; previous: string; next: string };
+  summary: { youOwe: number; owedToYou: number; paidByYou: number; paidToYou: number; allTimeYouOwe: number; allTimeOwedToYou: number };
+  chart: { day: number; borrowed: number; lent: number }[];
+};
+
+const categories = ["Food", "Groceries", "Bills", "Shopping", "Travel", "Health", "Home", "Other"];
+
+export function DashboardClient(props: Props) {
+  const { currentUser, household, members, debts, month, summary, chart } = props;
+  const router = useRouter();
+  const [entryOpen, setEntryOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<"ALL" | "DEBT" | "PAID">("ALL");
+  const [pending, startTransition] = useTransition();
+  const currency = household.currency;
+  const partner = members.find((member) => member.id !== currentUser.id);
+
+  const filtered = useMemo(() => debts.filter((debt) => {
+    const matchesStatus = status === "ALL" || debt.status === status;
+    const term = search.toLowerCase();
+    return matchesStatus && (!term || `${debt.itemName} ${debt.category} ${debt.notes ?? ""}`.toLowerCase().includes(term));
+  }), [debts, search, status]);
+
+  const grouped = useMemo(() => {
+    const groups = new Map<string, Debt[]>();
+    filtered.forEach((debt) => {
+      const key = format(new Date(debt.incurredAt), "yyyy-MM-dd");
+      groups.set(key, [...(groups.get(key) ?? []), debt]);
+    });
+    return [...groups.entries()];
+  }, [filtered]);
+
+  function goToMonth(key: string) { router.push(`/dashboard?month=${key}`); }
+  function run(action: () => Promise<{ ok: boolean; message?: string; error?: string }>) {
+    startTransition(async () => {
+      const result = await action();
+      if (result.ok) { toast.success(result.message); router.refresh(); } else toast.error(result.error);
+    });
+  }
+
+  return (
+    <div className="min-h-svh bg-background text-foreground">
+      <header className="sticky top-0 z-30 border-b border-border/70 bg-background/90 backdrop-blur-xl">
+        <div className="mx-auto flex h-18 max-w-[1440px] items-center justify-between px-4 sm:px-6 lg:px-10">
+          <div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground"><ArrowDownRight className="size-5" /></div><div><p className="font-display text-lg font-bold leading-none">Owewell</p><p className="mt-1 hidden text-[11px] font-semibold text-muted-foreground sm:block">{household.name}</p></div></div>
+          <nav className="hidden items-center rounded-xl bg-secondary/70 p-1 md:flex"><span className="flex items-center gap-2 rounded-lg bg-card px-4 py-2 text-sm font-semibold shadow-sm"><LayoutDashboard className="size-4" />Overview</span><button onClick={() => setSettingsOpen(true)} className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground"><Users className="size-4" />Household</button></nav>
+          <div className="flex items-center gap-2"><Button onClick={() => setEntryOpen(true)} size="sm" disabled={!partner} className="hidden sm:flex"><Plus className="size-4" />Add entry</Button><button onClick={() => setSettingsOpen(true)} className="grid size-10 place-items-center rounded-full bg-[#dcebdc] text-sm font-bold text-primary">{initials(currentUser.name)}</button></div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-[1440px] px-4 pb-28 pt-7 sm:px-6 lg:px-10 lg:pb-12">
+        {!partner && <InviteBanner household={household} pending={pending} onJoin={(code) => run(() => joinHousehold(code))} />}
+        <section className="mb-7 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+          <div><p className="mb-2 text-sm font-semibold text-muted-foreground">Hello, {currentUser.name.split(" ")[0]} <span aria-hidden>👋</span></p><h1 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">Here’s your money picture.</h1></div>
+          <div className="flex items-center justify-between gap-1 rounded-2xl border border-border bg-card p-1.5 shadow-sm"><button aria-label="Previous month" onClick={() => goToMonth(month.previous)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowLeft className="size-4" /></button><button onClick={() => goToMonth(format(new Date(), "yyyy-MM"))} className="min-w-36 px-2 text-sm font-bold"><CalendarDays className="mr-2 inline size-4 text-primary" />{month.label}</button><button aria-label="Next month" onClick={() => goToMonth(month.next)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowRight className="size-4" /></button></div>
+        </section>
+
+        <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard label="You owe this month" value={summary.youOwe} currency={currency} icon={ArrowUpIcon} tone="peach" detail={`${formatMoney(summary.allTimeYouOwe, currency)} open overall`} />
+          <SummaryCard label="Owed to you this month" value={summary.owedToYou} currency={currency} icon={ArrowDownLeft} tone="green" detail={`${formatMoney(summary.allTimeOwedToYou, currency)} open overall`} />
+          <SummaryCard label="You paid this month" value={summary.paidByYou} currency={currency} icon={CheckCircle2} tone="blue" detail="Payments completed" />
+          <SummaryCard label="Paid back to you" value={summary.paidToYou} currency={currency} icon={WalletCards} tone="gold" detail="Money returned" />
+        </section>
+
+        <section className="mb-6 grid gap-6 xl:grid-cols-[1.55fr_.85fr]">
+          <Card className="overflow-hidden"><CardHeader className="flex-row items-center justify-between"><div><CardTitle>Monthly movement</CardTitle><p className="mt-1 text-sm text-muted-foreground">Daily borrowing and lending in {month.label}</p></div><div className="hidden gap-4 text-xs font-semibold sm:flex"><span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-[#df825f]" />Borrowed</span><span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-primary" />Lent</span></div></CardHeader><CardContent className="h-64 pl-0 sm:h-72"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chart} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}><defs><linearGradient id="borrowed" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#df825f" stopOpacity={0.25}/><stop offset="95%" stopColor="#df825f" stopOpacity={0}/></linearGradient><linearGradient id="lent" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#315f46" stopOpacity={0.22}/><stop offset="95%" stopColor="#315f46" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 7" vertical={false} stroke="#e7e6df"/><XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: "#898b82", fontSize: 11 }} interval={4}/><Tooltip formatter={(value) => formatMoney(Number(value), currency)} labelFormatter={(day) => `${month.label.split(" ")[0]} ${day}`} contentStyle={{ borderRadius: 14, border: "1px solid #e7e6df", boxShadow: "0 12px 30px rgba(0,0,0,.07)" }}/><Area type="monotone" dataKey="borrowed" stroke="#df825f" strokeWidth={2.5} fill="url(#borrowed)"/><Area type="monotone" dataKey="lent" stroke="#315f46" strokeWidth={2.5} fill="url(#lent)"/></AreaChart></ResponsiveContainer></CardContent></Card>
+          <BalanceCard currentUser={currentUser} partner={partner} summary={summary} currency={currency} />
+        </section>
+
+        <Card>
+          <CardHeader className="gap-4 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle>Monthly ledger</CardTitle><p className="mt-1 text-sm text-muted-foreground">{debts.length} {debts.length === 1 ? "entry" : "entries"} recorded in {month.label}</p></div><div className="flex gap-2"><div className="relative min-w-0 flex-1 sm:w-56"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search entries" className="pl-9" /></div><select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className="rounded-xl border border-input bg-background px-3 text-sm font-semibold outline-none"><option value="ALL">All</option><option value="DEBT">Debt</option><option value="PAID">Paid</option></select></div></CardHeader>
+          <CardContent>{grouped.length ? <div className="space-y-7">{grouped.map(([date, entries]) => <div key={date}><div className="mb-3 flex items-center gap-3"><p className="text-xs font-bold uppercase tracking-[.16em] text-muted-foreground">{format(new Date(`${date}T12:00:00`), "EEEE, MMMM d")}</p><div className="h-px flex-1 bg-border"/></div><div className="space-y-2">{entries.map((debt) => <DebtRow key={debt.id} debt={debt} currentUser={currentUser} currency={currency} pending={pending} run={run} />)}</div></div>)}</div> : <EmptyLedger onAdd={() => setEntryOpen(true)} canAdd={Boolean(partner)} />}</CardContent>
+        </Card>
+      </main>
+
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-5 py-3 backdrop-blur md:hidden"><div className="mx-auto flex max-w-sm items-center justify-around"><button className="flex flex-col items-center gap-1 text-[11px] font-bold text-primary"><Home className="size-5" />Home</button><button disabled={!partner} onClick={() => setEntryOpen(true)} className="-mt-8 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-50"><Plus className="size-6" /></button><button onClick={() => setSettingsOpen(true)} className="flex flex-col items-center gap-1 text-[11px] font-bold text-muted-foreground"><Settings2 className="size-5" />Settings</button></div></div>
+
+      {entryOpen && partner && <EntryModal currentUser={currentUser} members={members} pending={pending} onClose={() => setEntryOpen(false)} onSubmit={(input) => run(async () => { const result = await createDebt(input); if (result.ok) setEntryOpen(false); return result; })} />}
+      {settingsOpen && <SettingsPanel currentUser={currentUser} household={household} members={members} pending={pending} onClose={() => setSettingsOpen(false)} run={run} />}
+    </div>
+  );
+}
+
+function ArrowUpIcon(props: React.ComponentProps<typeof ArrowDownRight>) { return <ArrowDownRight {...props} className={`${props.className ?? ""} rotate-180`} />; }
+
+function SummaryCard({ label, value, currency, icon: Icon, tone, detail }: { label: string; value: number; currency: string; icon: React.ElementType; tone: string; detail: string }) {
+  const tones: Record<string, string> = { peach: "bg-[#f8e4da] text-[#9e4f37]", green: "bg-[#dcebdc] text-primary", blue: "bg-[#dfeaec] text-[#37616c]", gold: "bg-[#f5e9c9] text-[#80621f]" };
+  return <Card className="p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p><p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p></Card>;
+}
+
+function BalanceCard({ currentUser, partner, summary, currency }: { currentUser: Member; partner?: Member; summary: Props["summary"]; currency: string }) {
+  const net = summary.allTimeOwedToYou - summary.allTimeYouOwe;
+  return <Card className="relative overflow-hidden bg-[#244b37] text-white"><div className="absolute -right-16 -top-16 size-52 rounded-full border-[36px] border-white/5"/><CardHeader><p className="text-xs font-bold uppercase tracking-[.18em] text-white/60">All-time balance</p><CardTitle className="text-white">Between you two</CardTitle></CardHeader><CardContent><div className="mb-6 flex items-center"><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#dcebdc] font-bold text-primary">{initials(currentUser.name)}</div><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><HandCoins className="size-5 text-[#f2d68d]"/><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#f4dfd5] font-bold text-[#9e4f37]">{partner ? initials(partner.name) : "?"}</div></div><p className="text-sm text-white/65">{!partner ? "Invite your partner to calculate your balance." : net > 0 ? `${partner.name.split(" ")[0]} owes you` : net < 0 ? `You owe ${partner.name.split(" ")[0]}` : "You’re perfectly even"}</p><p className="mt-1 font-display text-4xl font-semibold">{formatMoney(Math.abs(net), currency)}</p><div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-[#f2d68d]" style={{ width: `${Math.min(100, Math.max(8, Math.abs(net) / Math.max(summary.allTimeOwedToYou + summary.allTimeYouOwe, 1) * 100))}%` }} /></div></CardContent></Card>;
+}
+
+function DebtRow({ debt, currentUser, currency, pending, run }: { debt: Debt; currentUser: Member; currency: string; pending: boolean; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
+  const youBorrowed = debt.borrower.id === currentUser.id;
+  return <div className="group flex items-center gap-3 rounded-2xl border border-transparent bg-secondary/45 p-3 transition hover:border-border hover:bg-card sm:gap-4 sm:p-4"><div className={`grid size-11 shrink-0 place-items-center rounded-2xl ${debt.paymentMethod === "CREDIT_CARD" ? "bg-[#e7e2f4] text-[#65548d]" : "bg-[#e1ebda] text-primary"}`}>{debt.paymentMethod === "CREDIT_CARD" ? <CreditCard className="size-5" /> : <Banknote className="size-5" />}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate font-semibold">{debt.itemName}</p><Badge className={debt.status === "PAID" ? "bg-[#dcebdc] text-primary" : "bg-[#f8e4da] text-[#9e4f37]"}>{debt.status === "PAID" ? "Paid" : "Debt"}</Badge></div><p className="mt-1 truncate text-xs text-muted-foreground">{debt.category} · {debt.paymentMethod === "CREDIT_CARD" ? "Credit card" : "Cash"} · {format(new Date(debt.incurredAt), "h:mm a")}</p>{debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}</div><div className="text-right"><p className={`font-display text-base font-bold sm:text-lg ${youBorrowed ? "text-[#a6533b]" : "text-primary"}`}>{youBorrowed ? "−" : "+"}{formatMoney(debt.amount, currency)}</p><p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">{debt.borrower.name.split(" ")[0]} owes {debt.lender.name.split(" ")[0]}</p></div><div className="flex shrink-0 gap-1"><button disabled={pending} aria-label={debt.status === "DEBT" ? "Mark paid" : "Mark unpaid"} onClick={() => run(() => setDebtStatus(debt.id, debt.status === "DEBT" ? "PAID" : "DEBT"))} className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"><Check className="size-4" /></button><button disabled={pending} aria-label="Delete entry" onClick={() => { if (window.confirm(`Delete “${debt.itemName}”?`)) run(() => deleteDebt(debt.id)); }} className="hidden size-9 place-items-center rounded-xl text-muted-foreground hover:bg-red-50 hover:text-red-600 sm:grid"><Trash2 className="size-4" /></button></div></div>;
+}
+
+function EntryModal({ currentUser, members, pending, onClose, onSubmit }: { currentUser: Member; members: Member[]; pending: boolean; onClose: () => void; onSubmit: (input: Record<string, unknown>) => void }) {
+  const partner = members.find((m) => m.id !== currentUser.id)!;
+  const [direction, setDirection] = useState<"BORROWED" | "LENT">("BORROWED");
+  const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  function submit(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); const data = Object.fromEntries(new FormData(event.currentTarget)); onSubmit({ ...data, lenderId: direction === "BORROWED" ? partner.id : currentUser.id, borrowerId: direction === "BORROWED" ? currentUser.id : partner.id }); }
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#10251b]/45 p-0 backdrop-blur-sm sm:items-center sm:p-5" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><div role="dialog" aria-modal="true" className="max-h-[94svh] w-full overflow-y-auto rounded-t-[2rem] bg-card p-5 shadow-2xl sm:max-w-2xl sm:rounded-[2rem] sm:p-7"><div className="mb-6 flex items-start justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-primary">New transaction</p><h2 className="mt-1 font-display text-2xl font-semibold">Add an entry</h2></div><button onClick={onClose} className="grid size-10 place-items-center rounded-full bg-secondary"><X className="size-5" /></button></div><form onSubmit={submit} className="space-y-5"><div><label className="mb-2 block text-sm font-semibold">Who borrowed?</label><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setDirection("BORROWED")} className={`rounded-2xl border p-3 text-left text-sm transition ${direction === "BORROWED" ? "border-primary bg-[#e9f1e7] ring-2 ring-primary/10" : "border-border"}`}><span className="font-bold">I borrowed</span><span className="mt-1 block text-xs text-muted-foreground">from {partner.name.split(" ")[0]}</span></button><button type="button" onClick={() => setDirection("LENT")} className={`rounded-2xl border p-3 text-left text-sm transition ${direction === "LENT" ? "border-primary bg-[#e9f1e7] ring-2 ring-primary/10" : "border-border"}`}><span className="font-bold">{partner.name.split(" ")[0]} borrowed</span><span className="mt-1 block text-xs text-muted-foreground">from me</span></button></div></div><div className="grid gap-4 sm:grid-cols-[1fr_.55fr]"><Field label="Item name"><Input name="itemName" required placeholder="Dinner, groceries, new shoes…" autoFocus /></Field><Field label="Amount"><Input name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00" /></Field></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Category"><Select name="category">{categories.map((c) => <option key={c}>{c}</option>)}</Select></Field><Field label="Paid with"><Select name="paymentMethod"><option value="CREDIT_CARD">Credit card</option><option value="CASH">Cash</option></Select></Field></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Date & time"><Input name="incurredAt" type="datetime-local" required defaultValue={now.toISOString().slice(0,16)} /></Field><Field label="Status"><Select name="status"><option value="DEBT">Still a debt</option><option value="PAID">Already paid</option></Select></Field></div><Field label="Notes" optional><Textarea name="notes" placeholder="Add context, receipt details, or anything to remember…" /></Field><div className="flex gap-3 pt-1"><Button type="button" variant="outline" size="lg" onClick={onClose} className="flex-1">Cancel</Button><Button type="submit" size="lg" disabled={pending} className="flex-[1.4]">{pending ? <LoaderCircle className="size-4 animate-spin" /> : <ReceiptText className="size-4" />}Save entry</Button></div></form></div></div>;
+}
+
+function SettingsPanel({ currentUser, household, members, pending, onClose, run }: { currentUser: Member; household: Props["household"]; members: Member[]; pending: boolean; onClose: () => void; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
+  const router = useRouter();
+  const [copied, setCopied] = useState(false);
+  const partner = members.find((m) => m.id !== currentUser.id);
+  function save(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); run(() => updateHousehold({ name: String(data.get("name")), currency: String(data.get("currency")) })); }
+  async function copy() { await navigator.clipboard.writeText(household.inviteCode); setCopied(true); toast.success("Invite code copied"); setTimeout(() => setCopied(false), 1600); }
+  return <div className="fixed inset-0 z-50 bg-[#10251b]/40 backdrop-blur-sm" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="ml-auto flex h-full w-full max-w-md flex-col overflow-y-auto bg-card p-6 shadow-2xl sm:p-8"><div className="mb-8 flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-primary">Your space</p><h2 className="mt-1 font-display text-2xl font-semibold">Household settings</h2></div><button onClick={onClose} className="grid size-10 place-items-center rounded-full bg-secondary"><X className="size-5" /></button></div><section className="mb-8 rounded-3xl bg-[#eef4ed] p-5"><div className="mb-4 flex items-center gap-3"><div className="grid size-11 place-items-center rounded-full bg-[#dcebdc] font-bold text-primary">{initials(currentUser.name)}</div><div><p className="font-semibold">{currentUser.name}</p><p className="text-xs text-muted-foreground">{currentUser.email}</p></div></div>{partner ? <div className="flex items-center gap-3 border-t border-primary/10 pt-4"><div className="grid size-11 place-items-center rounded-full bg-[#f4dfd5] font-bold text-[#9e4f37]">{initials(partner.name)}</div><div><p className="font-semibold">{partner.name}</p><p className="text-xs text-muted-foreground">Partner · {partner.email}</p></div></div> : <p className="border-t border-primary/10 pt-4 text-sm text-muted-foreground">Your partner hasn’t joined yet.</p>}</section><form onSubmit={save} className="space-y-4"><Field label="Household name"><Input name="name" defaultValue={household.name} /></Field><Field label="Currency"><Select name="currency" defaultValue={household.currency}>{["USD","PHP","CNY","EUR","GBP","AUD","CAD","SGD"].map(c => <option key={c}>{c}</option>)}</Select></Field><Button disabled={pending} type="submit" className="w-full">Save settings</Button></form><div className="my-8 h-px bg-border"/><div><p className="font-semibold">Partner invite code</p><p className="mt-1 text-sm leading-6 text-muted-foreground">Your partner creates their own account, then enters this code.</p><button onClick={copy} className="mt-3 flex w-full items-center justify-between rounded-2xl border border-dashed border-primary/30 bg-[#eef4ed] px-4 py-4"><span className="font-mono text-lg font-bold tracking-[.18em] text-primary">{household.inviteCode}</span><span className="text-xs font-bold text-primary">{copied ? "Copied!" : "Copy code"}</span></button></div><div className="mt-auto pt-10"><Button variant="outline" className="w-full text-red-600" onClick={async () => { await authClient.signOut(); router.push("/login"); router.refresh(); }}><LogOut className="size-4" />Sign out</Button></div></aside></div>;
+}
+
+function InviteBanner({ household, pending, onJoin }: { household: Props["household"]; pending: boolean; onJoin: (code: string) => void }) {
+  const [joining, setJoining] = useState(false); const [code, setCode] = useState("");
+  return <div className="mb-7 rounded-3xl border border-[#d8c88e] bg-[#fff8df] p-5 sm:flex sm:items-center sm:justify-between"><div className="flex gap-4"><div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#f5e9c9] text-[#80621f]"><UserPlus className="size-5" /></div><div><p className="font-bold">Connect with your partner</p><p className="mt-1 text-sm leading-6 text-[#796d4d]">Share code <strong className="font-mono tracking-widest">{household.inviteCode}</strong>, or join the household they created.</p></div></div><div className="mt-4 sm:mt-0">{joining ? <div className="flex gap-2"><Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="INVITE CODE" className="w-36 bg-white uppercase"/><Button disabled={pending || !code} onClick={() => onJoin(code)}>Join</Button></div> : <Button variant="outline" onClick={() => setJoining(true)} className="bg-white">I have their code</Button>}</div></div>;
+}
+
+function EmptyLedger({ onAdd, canAdd }: { onAdd: () => void; canAdd: boolean }) { return <div className="grid place-items-center py-14 text-center"><div className="mb-4 grid size-14 place-items-center rounded-2xl bg-secondary text-primary"><ReceiptText className="size-6" /></div><h3 className="font-display text-lg font-semibold">Nothing recorded here yet</h3><p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">{canAdd ? "Add your first cash or credit-card purchase for this month." : "Invite your partner first, then you can start your shared ledger."}</p>{canAdd && <Button onClick={onAdd} className="mt-5"><Plus className="size-4" />Add first entry</Button>}</div>; }
+function Field({ label, optional, children }: { label: string; optional?: boolean; children: React.ReactNode }) { return <label className="block text-sm font-semibold">{label}{optional && <span className="ml-1 font-normal text-muted-foreground">(optional)</span>}<div className="mt-2">{children}</div></label>; }
+function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <div className="relative"><select {...props} className="h-11 w-full appearance-none rounded-xl border border-input bg-background px-3.5 pr-9 text-sm outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/10"/><ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/></div>; }
