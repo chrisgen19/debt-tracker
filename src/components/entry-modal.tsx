@@ -7,6 +7,7 @@ import {
   Plane, Plus, ReceiptText, Shapes, ShoppingBag, ShoppingBasket, StickyNote, UtensilsCrossed, X, Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { sanitizeAmount } from "@/lib/amount";
 import { currencySymbol, initials } from "@/lib/utils";
 
 type Person = { id: string; name: string };
@@ -39,12 +40,6 @@ function toLocalInput(date: Date) {
   const local = new Date(date);
   local.setMinutes(local.getMinutes() - local.getTimezoneOffset());
   return local.toISOString().slice(0, 16);
-}
-
-/** Keeps digits and at most one decimal point so the big amount field never rejects a keystroke. */
-function sanitizeAmount(raw: string) {
-  const [whole, ...rest] = raw.replace(/[^\d.]/g, "").split(".");
-  return rest.length ? `${whole.slice(0, 9)}.${rest.join("").slice(0, 2)}` : whole.slice(0, 9);
 }
 
 export function EntryModal({ open, currentUser, partner, currency, pending, onClose, onSubmit }: Props) {
@@ -114,7 +109,12 @@ export function EntryModal({ open, currentUser, partner, currency, pending, onCl
     <dialog ref={dialogRef} onClose={onClose} aria-labelledby="entry-title" className="sheet">
       <form
         onSubmit={submit}
-        onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) event.currentTarget.requestSubmit(); }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            event.currentTarget.requestSubmit();
+          }
+        }}
         className="sheet-panel flex max-h-[92svh] w-full min-w-0 flex-col overflow-hidden rounded-t-[2rem] bg-card text-left shadow-2xl sm:rounded-[2rem]"
       >
         <Hero
