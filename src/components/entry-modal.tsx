@@ -59,6 +59,7 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
   const [amount, setAmount] = useState("");
   const [itemName, setItemName] = useState("");
   const [category, setCategory] = useState<string>(categories[0]?.name ?? "Other");
+  const [selectedQuickPick, setSelectedQuickPick] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CREDIT_CARD">("CREDIT_CARD");
   const [incurredAt, setIncurredAt] = useState(() => toLocalInput(new Date()));
   const [settled, setSettled] = useState(false);
@@ -134,38 +135,25 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
           symbol={symbol} settled={settled} onClose={onClose}
         />
 
-        <div className="flex-1 space-y-6 overflow-y-auto px-5 py-6 sm:px-7">
-          <section>
-            <Legend>What was it?</Legend>
-            <input
-              value={itemName}
-              onChange={(event) => setItemName(event.target.value)}
-              placeholder={active?.ideas[0] ? `${active.ideas[0]}…` : "What did you buy?"}
-              maxLength={100}
-              className="h-12 w-full rounded-xl border border-input bg-background px-4 text-base font-medium outline-none placeholder:font-normal placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/10"
-            />
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {active?.ideas.map((idea) => (
-                <button
-                  key={idea} type="button" onClick={() => setItemName(idea)}
-                  className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:border-primary/40 hover:bg-secondary hover:text-foreground"
-                >
-                  {idea}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <Legend>Category</Legend>
+        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-6 sm:px-7">
+          <section className="rounded-3xl border border-border bg-secondary/20 p-4 sm:p-5">
+            <StepLegend step="1" title="Choose a category">This sets the quick picks shown next.</StepLegend>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
               {categories.map(({ name }, index) => {
                 const { icon: Icon, tint } = categoryVisual(name, index);
                 const selected = name === category;
                 return (
                   <button
-                    key={name} type="button" onClick={() => setCategory(name)} aria-pressed={selected}
-                    className={`flex min-w-0 flex-col items-center gap-1.5 rounded-2xl border p-2 text-[11px] font-bold transition sm:p-2.5 ${selected ? "border-primary/40 bg-secondary/60 ring-2 ring-primary/10" : "border-transparent hover:bg-secondary/50"}`}
+                    key={name}
+                    type="button"
+                    onClick={() => {
+                      if (name === category) return;
+                      setCategory(name);
+                      if (selectedQuickPick) setItemName("");
+                      setSelectedQuickPick(null);
+                    }}
+                    aria-pressed={selected}
+                    className={`flex min-w-0 flex-col items-center gap-1.5 rounded-2xl border bg-card p-2 text-[11px] font-bold transition sm:p-2.5 ${selected ? "border-primary/40 shadow-sm ring-2 ring-primary/10" : "border-border/70 text-muted-foreground hover:border-primary/20 hover:bg-secondary/50"}`}
                   >
                     <span className={`grid size-9 place-items-center rounded-xl transition ${selected ? tint : "bg-secondary text-muted-foreground"}`}>
                       <Icon className="size-[18px]" />
@@ -175,6 +163,41 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
                 );
               })}
             </div>
+          </section>
+
+          <section className="rounded-3xl border border-border p-4 sm:p-5">
+            <StepLegend step="2" title="What was it?">Pick a suggestion or enter your own description.</StepLegend>
+            <input
+              value={itemName}
+              onChange={(event) => {
+                setItemName(event.target.value);
+                setSelectedQuickPick(null);
+              }}
+              placeholder={active?.ideas[0] ? `e.g. ${active.ideas[0]}` : "What did you buy?"}
+              maxLength={100}
+              className="h-12 w-full rounded-2xl border border-input bg-background px-4 text-base font-medium outline-none placeholder:font-normal placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/10"
+            />
+            {active && active.ideas.length > 0 && (
+              <div className="mt-3">
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-[.12em] text-muted-foreground">Quick picks for {active.name}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {active.ideas.map((idea) => {
+                    const selected = selectedQuickPick === idea;
+                    return (
+                      <button
+                        key={idea}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => { setItemName(idea); setSelectedQuickPick(idea); }}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${selected ? "border-primary/35 bg-[#eef4ed] text-primary ring-1 ring-primary/10" : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-secondary hover:text-foreground"}`}
+                      >
+                        {idea}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </section>
 
           <div className="grid gap-6 sm:grid-cols-2">
@@ -361,4 +384,16 @@ function WhenPicker({ value, onChange }: { value: string; onChange: (value: stri
 
 function Legend({ children }: { children: React.ReactNode }) {
   return <p className="mb-2 text-xs font-bold uppercase tracking-[.14em] text-muted-foreground">{children}</p>;
+}
+
+function StepLegend({ step, title, children }: { step: string; title: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-4 flex items-start gap-3">
+      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-primary text-xs font-bold text-primary-foreground">{step}</span>
+      <div>
+        <h3 className="text-sm font-bold">{title}</h3>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{children}</p>
+      </div>
+    </div>
+  );
 }
