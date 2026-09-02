@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import { createDebt, deleteDebt, joinHousehold, setDebtStatus, updateCategoryConfig, updateHousehold } from "@/app/actions";
+import { filterLedgerEntries, type DirectionFilter, type LedgerMode, type LedgerStatusFilter } from "@/lib/ledger";
 import { formatMoney, initials } from "@/lib/utils";
 import type { CategoryOption } from "@/lib/categories";
 import { Button } from "@/components/ui/button";
@@ -33,40 +34,33 @@ type Props = {
   members: Member[];
   categories: CategoryOption[];
   debts: Debt[];
+  openDebts: Debt[];
+  openDebtCount: number;
+  ledgerMode: LedgerMode;
   month: { key: string; label: string; previous: string; next: string };
   summary: { youOwe: number; owedToYou: number; paidByYou: number; paidToYou: number; allTimeYouOwe: number; allTimeOwedToYou: number };
   chart: { day: number; borrowed: number; lent: number }[];
 };
 
 export function DashboardClient(props: Props) {
-  const { currentUser, household, members, categories, debts, month, summary, chart } = props;
+  const { currentUser, household, members, categories, debts, openDebts, openDebtCount, ledgerMode, month, summary, chart } = props;
   const router = useRouter();
   const [entryOpen, setEntryOpen] = useState(false);
   const [entrySession, setEntrySession] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<"ALL" | "DEBT" | "PAID">("ALL");
   const [pending, startTransition] = useTransition();
   const currency = household.currency;
   const partner = members.find((member) => member.id !== currentUser.id);
 
-  const filtered = useMemo(() => debts.filter((debt) => {
-    const matchesStatus = status === "ALL" || debt.status === status;
-    const term = search.toLowerCase();
-    return matchesStatus && (!term || `${debt.itemName} ${debt.category} ${debt.notes ?? ""}`.toLowerCase().includes(term));
-  }), [debts, search, status]);
-
-  const grouped = useMemo(() => {
-    const groups = new Map<string, Debt[]>();
-    filtered.forEach((debt) => {
-      const key = format(new Date(debt.incurredAt), "yyyy-MM-dd");
-      groups.set(key, [...(groups.get(key) ?? []), debt]);
-    });
-    return [...groups.entries()];
-  }, [filtered]);
-
   function openEntry() { setEntrySession((session) => session + 1); setEntryOpen(true); }
-  function goToMonth(key: string) { router.push(`/dashboard?month=${key}`); }
+  function ledgerUrl(mode: LedgerMode, monthKey = month.key) {
+    return `/dashboard?month=${monthKey}${mode === "OPEN" ? "&ledger=open" : ""}`;
+  }
+  function goToMonth(key: string) { router.push(ledgerUrl(ledgerMode, key)); }
+  function showLedger(mode: LedgerMode, scroll = false) {
+    router.push(ledgerUrl(mode), { scroll: false });
+    if (scroll) document.getElementById("ledger")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   function run(action: () => Promise<{ ok: boolean; message?: string; error?: string }>) {
     startTransition(async () => {
       const result = await action();
@@ -92,8 +86,8 @@ export function DashboardClient(props: Props) {
         </section>
 
         <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard label="You owe this month" value={summary.youOwe} currency={currency} icon={ArrowUpIcon} tone="peach" detail={`${formatMoney(summary.allTimeYouOwe, currency)} open overall`} />
-          <SummaryCard label="Owed to you this month" value={summary.owedToYou} currency={currency} icon={ArrowDownLeft} tone="green" detail={`${formatMoney(summary.allTimeOwedToYou, currency)} open overall`} />
+          <SummaryCard label="You owe this month" value={summary.youOwe} currency={currency} icon={ArrowUpIcon} tone="peach" detail={`${formatMoney(summary.allTimeYouOwe, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} />
+          <SummaryCard label="Owed to you this month" value={summary.owedToYou} currency={currency} icon={ArrowDownLeft} tone="green" detail={`${formatMoney(summary.allTimeOwedToYou, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} />
           <SummaryCard label="You paid this month" value={summary.paidByYou} currency={currency} icon={CheckCircle2} tone="blue" detail="Payments completed" />
           <SummaryCard label="Paid back to you" value={summary.paidToYou} currency={currency} icon={WalletCards} tone="gold" detail="Money returned" />
         </section>
@@ -103,10 +97,21 @@ export function DashboardClient(props: Props) {
           <BalanceCard currentUser={currentUser} partner={partner} summary={summary} currency={currency} />
         </section>
 
-        <Card>
-          <CardHeader className="gap-4 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle>Monthly ledger</CardTitle><p className="mt-1 text-sm text-muted-foreground">{debts.length} {debts.length === 1 ? "entry" : "entries"} recorded in {month.label}</p></div><div className="flex gap-2"><div className="relative min-w-0 flex-1 sm:w-56"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search entries" className="pl-9" /></div><select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className="rounded-xl border border-input bg-background px-3 text-sm font-semibold outline-none"><option value="ALL">All</option><option value="DEBT">Debt</option><option value="PAID">Paid</option></select></div></CardHeader>
-          <CardContent>{grouped.length ? <div className="space-y-7">{grouped.map(([date, entries]) => <div key={date}><div className="mb-3 flex items-center gap-3"><p className="text-xs font-bold uppercase tracking-[.16em] text-muted-foreground">{format(new Date(`${date}T12:00:00`), "EEEE, MMMM d")}</p><div className="h-px flex-1 bg-border"/></div><div className="space-y-2">{entries.map((debt) => <DebtRow key={debt.id} debt={debt} currentUser={currentUser} currency={currency} pending={pending} run={run} />)}</div></div>)}</div> : <EmptyLedger onAdd={openEntry} canAdd={Boolean(partner)} />}</CardContent>
-        </Card>
+        <LedgerCard
+          mode={ledgerMode}
+          month={month}
+          monthlyDebts={debts}
+          openDebts={openDebts}
+          openDebtCount={openDebtCount}
+          currentUser={currentUser}
+          currency={currency}
+          summary={summary}
+          pending={pending}
+          canAdd={Boolean(partner)}
+          onModeChange={showLedger}
+          onAdd={openEntry}
+          run={run}
+        />
       </main>
 
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-5 py-3 backdrop-blur md:hidden"><div className="mx-auto flex max-w-sm items-center justify-around"><button className="flex flex-col items-center gap-1 text-[11px] font-bold text-primary"><Home className="size-5" />Home</button><button disabled={!partner} onClick={openEntry} className="-mt-8 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-50"><Plus className="size-6" /></button><button onClick={() => setSettingsOpen(true)} className="flex flex-col items-center gap-1 text-[11px] font-bold text-muted-foreground"><Settings2 className="size-5" />Settings</button></div></div>
@@ -119,9 +124,147 @@ export function DashboardClient(props: Props) {
 
 function ArrowUpIcon(props: React.ComponentProps<typeof ArrowDownRight>) { return <ArrowDownRight {...props} className={`${props.className ?? ""} rotate-180`} />; }
 
-function SummaryCard({ label, value, currency, icon: Icon, tone, detail }: { label: string; value: number; currency: string; icon: React.ElementType; tone: string; detail: string }) {
+function SummaryCard({ label, value, currency, icon: Icon, tone, detail, onDetailClick }: { label: string; value: number; currency: string; icon: React.ElementType; tone: string; detail: string; onDetailClick?: () => void }) {
   const tones: Record<string, string> = { peach: "bg-[#f8e4da] text-[#9e4f37]", green: "bg-[#dcebdc] text-primary", blue: "bg-[#dfeaec] text-[#37616c]", gold: "bg-[#f5e9c9] text-[#80621f]" };
-  return <Card className="p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p><p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p></Card>;
+  return <Card className="p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p>{onDetailClick ? <button type="button" onClick={onDetailClick} className="mt-3 text-left text-xs font-bold text-primary hover:underline">{detail} · View all unpaid</button> : <p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p>}</Card>;
+}
+
+function LedgerCard({ mode, month, monthlyDebts, openDebts, openDebtCount, currentUser, currency, summary, pending, canAdd, onModeChange, onAdd, run }: {
+  mode: LedgerMode;
+  month: Props["month"];
+  monthlyDebts: Debt[];
+  openDebts: Debt[];
+  openDebtCount: number;
+  currentUser: Member;
+  currency: string;
+  summary: Props["summary"];
+  pending: boolean;
+  canAdd: boolean;
+  onModeChange: (mode: LedgerMode) => void;
+  onAdd: () => void;
+  run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<LedgerStatusFilter>("ALL");
+  const [direction, setDirection] = useState<DirectionFilter>("ALL");
+  const entries = mode === "OPEN" ? openDebts : monthlyDebts;
+
+  const filtered = useMemo(() => filterLedgerEntries(entries, {
+    mode, status, direction, currentUserId: currentUser.id, search,
+  }), [currentUser.id, direction, entries, mode, search, status]);
+
+  const grouped = useMemo(() => {
+    const groups = new Map<string, Debt[]>();
+    filtered.forEach((debt) => {
+      const key = format(new Date(debt.incurredAt), "yyyy-MM-dd");
+      groups.set(key, [...(groups.get(key) ?? []), debt]);
+    });
+    return [...groups.entries()];
+  }, [filtered]);
+
+  const directionOptions: { value: DirectionFilter; label: string }[] = [
+    { value: "ALL", label: "All" },
+    { value: "YOU_OWE", label: "You owe" },
+    { value: "OWED_TO_YOU", label: "Owed to you" },
+  ];
+
+  return (
+    <Card id="ledger" className="scroll-mt-24 overflow-hidden">
+      <CardHeader className="gap-5 border-b border-border/70">
+        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+          <div>
+            <CardTitle>{mode === "OPEN" ? "All unpaid" : "Monthly ledger"}</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {mode === "OPEN"
+                ? `${openDebtCount} ${openDebtCount === 1 ? "entry" : "entries"} still open across all months`
+                : `${monthlyDebts.length} ${monthlyDebts.length === 1 ? "entry" : "entries"} recorded in ${month.label}`}
+            </p>
+          </div>
+          <div role="group" aria-label="Ledger view" className="grid grid-cols-2 rounded-xl bg-secondary/80 p-1">
+            <button
+              type="button"
+              aria-pressed={mode === "MONTH"}
+              onClick={() => onModeChange("MONTH")}
+              className={`rounded-lg px-3 py-2 text-xs font-bold transition sm:px-4 ${mode === "MONTH" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              This month
+            </button>
+            <button
+              type="button"
+              aria-pressed={mode === "OPEN"}
+              onClick={() => onModeChange("OPEN")}
+              className={`flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition sm:px-4 ${mode === "OPEN" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              All unpaid <span className="rounded-full bg-[#f8e4da] px-1.5 py-0.5 text-[10px] text-[#9e4f37]">{openDebtCount}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {mode === "OPEN" ? (
+            <div role="group" aria-label="Unpaid direction" className="flex flex-wrap gap-1.5">
+              {directionOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={direction === option.value}
+                  onClick={() => setDirection(option.value)}
+                  className={`rounded-full border px-3 py-2 text-xs font-bold transition ${direction === option.value ? "border-primary/30 bg-[#eef4ed] text-primary" : "border-border bg-background text-muted-foreground hover:bg-secondary/60"}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} aria-label="Entry status" className="h-10 rounded-xl border border-input bg-background px-3 text-sm font-semibold outline-none">
+              <option value="ALL">All statuses</option>
+              <option value="DEBT">Debt</option>
+              <option value="PAID">Paid</option>
+            </select>
+          )}
+          <div className="relative min-w-0 flex-1 sm:max-w-72">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={mode === "OPEN" ? "Search unpaid entries" : "Search entries"} className="pl-9" />
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent className="pt-5 sm:pt-6">
+        {mode === "OPEN" && (
+          <div className="mb-6 grid gap-2 rounded-2xl bg-[#244b37] p-3 text-white sm:grid-cols-2 sm:p-4">
+            <div className="rounded-xl bg-white/7 px-3 py-2.5">
+              <p className="text-[11px] font-bold uppercase tracking-[.12em] text-white/55">You owe</p>
+              <p className="mt-1 font-display text-xl font-semibold">{formatMoney(summary.allTimeYouOwe, currency)}</p>
+            </div>
+            <div className="rounded-xl bg-white/7 px-3 py-2.5">
+              <p className="text-[11px] font-bold uppercase tracking-[.12em] text-white/55">Owed to you</p>
+              <p className="mt-1 font-display text-xl font-semibold text-[#f2d68d]">{formatMoney(summary.allTimeOwedToYou, currency)}</p>
+            </div>
+          </div>
+        )}
+
+        {grouped.length ? (
+          <div className="space-y-7">
+            {grouped.map(([date, dateEntries]) => (
+              <div key={date}>
+                <div className="mb-3 flex items-center gap-3">
+                  <p className="text-xs font-bold uppercase tracking-[.16em] text-muted-foreground">
+                    {format(new Date(`${date}T12:00:00`), mode === "OPEN" ? "EEEE, MMMM d, yyyy" : "EEEE, MMMM d")}
+                  </p>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+                <div className="space-y-2">
+                  {dateEntries.map((debt) => <DebtRow key={debt.id} debt={debt} currentUser={currentUser} currency={currency} pending={pending} run={run} />)}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyLedger mode={mode} hasEntries={entries.length > 0} onAdd={onAdd} canAdd={canAdd} />
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function BalanceCard({ currentUser, partner, summary, currency }: { currentUser: Member; partner?: Member; summary: Props["summary"]; currency: string }) {
@@ -204,6 +347,15 @@ function InviteBanner({ household, pending, onJoin }: { household: Props["househ
   return <div className="mb-7 rounded-3xl border border-[#d8c88e] bg-[#fff8df] p-5 sm:flex sm:items-center sm:justify-between"><div className="flex gap-4"><div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#f5e9c9] text-[#80621f]"><UserPlus className="size-5" /></div><div><p className="font-bold">Connect with your partner</p><p className="mt-1 text-sm leading-6 text-[#796d4d]">Share code <strong className="font-mono tracking-widest">{household.inviteCode}</strong>, or join the household they created.</p></div></div><div className="mt-4 sm:mt-0">{joining ? <div className="flex gap-2"><Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="INVITE CODE" className="w-36 bg-white uppercase"/><Button disabled={pending || !code} onClick={() => onJoin(code)}>Join</Button></div> : <Button variant="outline" onClick={() => setJoining(true)} className="bg-white">I have their code</Button>}</div></div>;
 }
 
-function EmptyLedger({ onAdd, canAdd }: { onAdd: () => void; canAdd: boolean }) { return <div className="grid place-items-center py-14 text-center"><div className="mb-4 grid size-14 place-items-center rounded-2xl bg-secondary text-primary"><ReceiptText className="size-6" /></div><h3 className="font-display text-lg font-semibold">Nothing recorded here yet</h3><p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">{canAdd ? "Add your first cash or credit-card purchase for this month." : "Invite your partner first, then you can start your shared ledger."}</p>{canAdd && <Button onClick={onAdd} className="mt-5"><Plus className="size-4" />Add first entry</Button>}</div>; }
+function EmptyLedger({ mode, hasEntries, onAdd, canAdd }: { mode: LedgerMode; hasEntries: boolean; onAdd: () => void; canAdd: boolean }) {
+  const filteredEmpty = hasEntries;
+  const title = filteredEmpty ? "No entries match those filters" : mode === "OPEN" ? "You’re all settled" : "Nothing recorded here yet";
+  const description = filteredEmpty
+    ? "Try another direction or search term."
+    : mode === "OPEN"
+      ? "There are no unpaid entries between you two."
+      : canAdd ? "Add your first cash or credit-card purchase for this month." : "Invite your partner first, then you can start your shared ledger.";
+  return <div className="grid place-items-center py-14 text-center"><div className="mb-4 grid size-14 place-items-center rounded-2xl bg-secondary text-primary">{mode === "OPEN" && !filteredEmpty ? <CheckCircle2 className="size-6" /> : <ReceiptText className="size-6" />}</div><h3 className="font-display text-lg font-semibold">{title}</h3><p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">{description}</p>{mode === "MONTH" && !filteredEmpty && canAdd && <Button onClick={onAdd} className="mt-5"><Plus className="size-4" />Add first entry</Button>}</div>;
+}
 function Field({ label, optional, children }: { label: string; optional?: boolean; children: React.ReactNode }) { return <label className="block text-sm font-semibold">{label}{optional && <span className="ml-1 font-normal text-muted-foreground">(optional)</span>}<div className="mt-2">{children}</div></label>; }
 function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <div className="relative"><select {...props} className="h-11 w-full appearance-none rounded-xl border border-input bg-background px-3.5 pr-9 text-sm outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/10"/><ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/></div>; }
