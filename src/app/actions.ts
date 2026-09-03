@@ -71,20 +71,27 @@ export async function createDebt(input: unknown): Promise<ActionResult> {
 export async function setDebtStatus(id: string, status: "DEBT" | "PAID"): Promise<ActionResult> {
   try {
     const user = await actor();
-    const debt = await prisma.debt.findFirst({ where: { id, householdId: user.householdId! }, select: { id: true, amount: true, status: true } });
+    const debt = await prisma.debt.findFirst({ where: { id, householdId: user.householdId! }, select: { amount: true } });
     if (!debt) return { ok: false, error: "Debt not found" };
-    // Already in this state, so skip the write rather than log a no-op transition.
-    if (debt.status === status) return { ok: true };
     const occurredAt = new Date();
-    await prisma.$transaction([
-      prisma.debt.update({ where: { id }, data: { status, paidAt: status === "PAID" ? occurredAt : null } }),
-      prisma.paymentEvent.create({
+    // The status guard lives in the UPDATE rather than in a preceding read: two
+    // requests racing on the same entry would otherwise both see the old status
+    // and each append an event for what is really one transition.
+    const applied = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.debt.updateMany({
+        where: { id, householdId: user.householdId!, status: { not: status } },
+        data: { status, paidAt: status === "PAID" ? occurredAt : null },
+      });
+      if (count === 0) return false;
+      await tx.paymentEvent.create({
         data: {
           type: status === "PAID" ? "PAID" : "UNPAID", amount: debt.amount, occurredAt,
           debtId: id, householdId: user.householdId!, actorId: user.id,
         },
-      }),
-    ]);
+      });
+      return true;
+    });
+    if (!applied) return { ok: true };
     revalidatePath("/dashboard");
     return { ok: true, message: status === "PAID" ? "Marked as paid" : "Moved back to debt" };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update this debt" }; }
