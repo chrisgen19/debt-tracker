@@ -88,7 +88,7 @@ export function DashboardClient(props: Props) {
 
       <main className="mx-auto max-w-[1440px] px-4 pb-28 pt-7 sm:px-6 lg:px-10 lg:pb-12">
         {!partner && <InviteBanner household={household} pending={pending} onJoin={(code) => run(() => joinHousehold(code))} />}
-        <section className="mb-6 grid gap-6 sm:grid-cols-[minmax(0,1fr)_auto] xl:grid-cols-[minmax(0,1.55fr)_minmax(0,.85fr)]">
+        <section className="mb-6 grid grid-cols-1 gap-6 sm:grid-cols-[minmax(0,1fr)_auto] xl:grid-cols-[minmax(0,1.55fr)_minmax(0,.85fr)]">
           <div className="order-1 sm:self-end"><p className="mb-2 text-sm font-semibold text-muted-foreground">Hello, {currentUser.name.split(" ")[0]} <span aria-hidden>👋</span></p><h1 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">Here’s your money picture.</h1></div>
           <BalanceCard className="order-2 sm:order-5 sm:col-span-2 xl:col-span-1" currentUser={currentUser} partner={partner} summary={summary} currency={currency} />
           <div className="order-3 flex items-center justify-between gap-1 rounded-2xl border border-border bg-card p-1.5 shadow-sm sm:order-2 sm:self-end"><button aria-label="Previous month" onClick={() => goToMonth(month.previous)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowLeft className="size-4" /></button><button onClick={() => goToMonth(format(new Date(), "yyyy-MM"))} className="min-w-36 px-2 text-sm font-bold"><CalendarDays className="mr-2 inline size-4 text-primary" />{month.label}</button><button aria-label="Next month" onClick={() => goToMonth(month.next)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowRight className="size-4" /></button></div>
