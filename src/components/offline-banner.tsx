@@ -21,7 +21,7 @@ export function OfflineBanner() {
     <div
       role="status"
       aria-live="polite"
-      className="fixed inset-x-0 top-0 z-40 bg-[#80621f] pt-[env(safe-area-inset-top)] text-white shadow-md"
+      className="fixed inset-x-0 top-0 z-40 bg-[#80621f] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-[env(safe-area-inset-top)] text-white shadow-md"
     >
       <p className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold">
         <CloudOff className="size-4 shrink-0" aria-hidden />

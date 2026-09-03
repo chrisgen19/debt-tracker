@@ -134,7 +134,7 @@ export function InstallApp() {
   if (suppressed || dismissed || !platform) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 px-4 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] md:left-auto md:max-w-sm md:pb-[calc(env(safe-area-inset-bottom)+1rem)] md:pr-6">
+    <div className="fixed inset-x-0 bottom-0 z-40 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] pl-[calc(env(safe-area-inset-left)+1rem)] pr-[calc(env(safe-area-inset-right)+1rem)] md:left-auto md:max-w-sm md:pb-[calc(env(safe-area-inset-bottom)+1rem)] md:pr-[calc(env(safe-area-inset-right)+1.5rem)]">
       <div className="rounded-3xl border border-border bg-card p-4 shadow-2xl">
         <div className="flex items-start gap-3">
           <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground">

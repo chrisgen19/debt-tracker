@@ -19,6 +19,7 @@ type SwRequest = { url: string; method: string; mode: string; headers: Headers }
 type SwEvent = {
   request: SwRequest;
   respondWith: (response: Promise<Response>) => void;
+  waitUntil: (work: Promise<unknown>) => void;
 };
 type ExtendableEvent = { waitUntil: (work: Promise<unknown>) => void; data?: { type: string } };
 
@@ -44,7 +45,11 @@ class MockCache {
     return this.entries.get(this.key(target));
   }
 
+  /** When set, writes only land once the returned promise is awaited. */
+  static delayWrites = false;
+
   async put(target: SwRequest | string, response: Response) {
+    if (MockCache.delayWrites) await new Promise((resolve) => setTimeout(resolve, 0));
     this.entries.set(this.key(target), response);
   }
 
@@ -59,6 +64,8 @@ function createHarness() {
   const listeners = new Map<string, (event: never) => void>();
   const cacheStorage = new Map<string, MockCache>();
   const fetched: string[] = [];
+  /** Work the worker asked the browser to keep it alive for. */
+  const extended: Promise<unknown>[] = [];
 
   let fetcher: (target: SwRequest) => Promise<Response> = async () => new Response("ok");
   const currentFetcher = () => fetcher;
@@ -143,6 +150,14 @@ function createHarness() {
       });
       await Promise.all(pending);
     },
+    /** Number of pending `waitUntil` extensions not yet settled. */
+    extensionCount() {
+      return extended.length;
+    },
+    /** Await everything the worker passed to `waitUntil`. */
+    async settle() {
+      await Promise.all(extended.splice(0));
+    },
     /** Returns the response the worker took over with, or null when it passed the request through. */
     handle(target: SwRequest): Promise<Response> | null {
       let taken: Promise<Response> | null = null;
@@ -150,6 +165,9 @@ function createHarness() {
         request: target,
         respondWith: (response) => {
           taken = response;
+        },
+        waitUntil: (work) => {
+          extended.push(work);
         },
       });
       return taken;
@@ -225,6 +243,7 @@ describe("service worker caching", () => {
 
     const asset = request("/_next/static/chunks/main-abc123.js");
     await sw.handle(asset)!;
+    await sw.settle();
     assert.equal(sw.fetched.length, 1);
 
     const second = await sw.handle(asset)!;
@@ -237,6 +256,7 @@ describe("service worker caching", () => {
     sw.setFetch(async () => new Response("chunk", { headers: { "Set-Cookie": "session=secret" } }));
 
     await sw.handle(request("/_next/static/chunks/main-abc123.js"))!;
+    await sw.settle();
     assert.deepEqual(cachedUrls(sw), []);
   });
 
@@ -252,7 +272,48 @@ describe("service worker caching", () => {
     sw.setFetch(async () => new Response("x", { status: 404 }));
     await sw.handle(request("/_next/static/chunks/c.js"))!;
 
+    await sw.settle();
     assert.deepEqual(cachedUrls(sw), []);
+  });
+
+  it("keeps the worker alive until a slow cache-first write lands", async () => {
+    MockCache.delayWrites = true;
+    try {
+      const sw = createHarness();
+      sw.setFetch(async () => new Response("chunk"));
+
+      await sw.handle(request("/_next/static/chunks/main-abc123.js"))!;
+      // The write is still in flight, and the worker asked to stay alive for it.
+      assert.deepEqual(cachedUrls(sw), []);
+      assert.equal(sw.extensionCount(), 1);
+
+      await sw.settle();
+      assert.equal(cachedUrls(sw).length, 1);
+    } finally {
+      MockCache.delayWrites = false;
+    }
+  });
+
+  it("keeps the worker alive for a background revalidation it did not wait on", async () => {
+    MockCache.delayWrites = true;
+    try {
+      const sw = createHarness();
+      sw.setFetch(async () => new Response("v1"));
+      const icon = request("/icons/icon-192.png");
+
+      await sw.handle(icon)!;
+      await sw.settle();
+
+      sw.setFetch(async () => new Response("v2"));
+      // The stale hit returns first, so the refresh has to be an extension.
+      assert.equal(await (await sw.handle(icon)!).text(), "v1");
+      assert.equal(sw.extensionCount(), 1);
+
+      await sw.settle();
+      assert.equal(await (await sw.handle(icon)!).text(), "v2");
+    } finally {
+      MockCache.delayWrites = false;
+    }
   });
 
   it("revalidates public branding assets in the background", async () => {
@@ -261,10 +322,12 @@ describe("service worker caching", () => {
     const icon = request("/icons/icon-192.png");
 
     assert.equal(await (await sw.handle(icon)!).text(), "v1");
+    await sw.settle();
 
     sw.setFetch(async () => new Response("v2"));
     // A cache hit is served immediately; the refreshed copy lands for next time.
     assert.equal(await (await sw.handle(icon)!).text(), "v1");
+    await sw.settle();
     assert.equal(await (await sw.handle(icon)!).text(), "v2");
   });
 });

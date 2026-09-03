@@ -111,26 +111,39 @@ function isStorable(response) {
   return true;
 }
 
-async function cacheFirst(request, cacheName) {
+/**
+ * Cache writes are handed to `event.waitUntil` so the browser keeps the worker
+ * alive until they land. Without it a write started as the response is returned
+ * can be cut short when the worker is terminated, and the entry is silently lost.
+ */
+async function cacheFirst(event, cacheName) {
+  const { request } = event;
   const cache = await caches.open(cacheName);
   const hit = await cache.match(request);
   if (hit) return hit;
   const response = await fetch(request);
-  if (isStorable(response)) cache.put(request, response.clone());
+  if (isStorable(response)) event.waitUntil(cache.put(request, response.clone()));
   return response;
 }
 
-async function staleWhileRevalidate(request, cacheName) {
+async function staleWhileRevalidate(event, cacheName) {
+  const { request } = event;
   const cache = await caches.open(cacheName);
   const hit = await cache.match(request);
   const network = fetch(request)
-    .then((response) => {
-      if (isStorable(response)) cache.put(request, response.clone());
+    .then(async (response) => {
+      if (isStorable(response)) await cache.put(request, response.clone());
       return response;
     })
     .catch(() => null);
-  // A hit serves immediately and the refresh lands in the cache for next time.
-  const response = hit ?? (await network);
+
+  if (hit) {
+    // Serve the hit now; the refresh has to outlive this response.
+    event.waitUntil(network);
+    return hit;
+  }
+
+  const response = await network;
   if (response) return response;
   throw new Error(`Unavailable offline: ${request.url}`);
 }
@@ -176,12 +189,12 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (isImmutable(url)) {
-    event.respondWith(cacheFirst(request, STATIC_CACHE));
+    event.respondWith(cacheFirst(event, STATIC_CACHE));
     return;
   }
 
   if (isPublicAsset(url)) {
-    event.respondWith(staleWhileRevalidate(request, SHELL_CACHE));
+    event.respondWith(staleWhileRevalidate(event, SHELL_CACHE));
     return;
   }
 

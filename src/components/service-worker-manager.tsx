@@ -32,13 +32,16 @@ export function ServiceWorkerManager() {
     }
 
     let cancelled = false;
-    let reloading = false;
+    let reloadRequested = false;
 
     function onControllerChange() {
-      // Fires once the accepted worker takes over. Guarded because Chrome can
-      // dispatch it more than once and a second reload would loop.
-      if (reloading) return;
-      reloading = true;
+      // A first install fires this too, because the worker calls clients.claim().
+      // Only an update the user actually accepted may reload the page, or a first
+      // visit would reload itself and throw away a half-filled entry form.
+      if (!reloadRequested) return;
+      // Cleared first: Chrome can dispatch this more than once, and a second
+      // reload would loop.
+      reloadRequested = false;
       window.location.reload();
     }
     navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
@@ -50,7 +53,10 @@ export function ServiceWorkerManager() {
         duration: Infinity,
         action: {
           label: "Reload",
-          onClick: () => worker.postMessage({ type: "SKIP_WAITING" }),
+          onClick: () => {
+            reloadRequested = true;
+            worker.postMessage({ type: "SKIP_WAITING" });
+          },
         },
       });
     }
