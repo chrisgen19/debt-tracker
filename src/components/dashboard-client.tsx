@@ -241,7 +241,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
             {settled && (
               <fieldset className="min-w-0">
                 <legend className="mb-1.5 text-[11px] font-bold uppercase tracking-[.12em] text-muted-foreground">Period</legend>
-                <div role="group" aria-label="Payment period" className="grid min-h-11 grid-cols-2 gap-1 rounded-xl border border-border bg-secondary/60 p-1 sm:min-w-72">
+                <div role="group" aria-label="Payment period" className="grid min-h-11 grid-cols-2 gap-1 rounded-xl border border-border bg-secondary/60 p-1">
                   {([
                     { mode: "PAID_MONTH" as const, label: shortMonthLabel },
                     { mode: "PAID_ALL" as const, label: "All time" },
