@@ -12,7 +12,7 @@ import {
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import { createDebt, deleteDebt, joinHousehold, setDebtStatus, updateCategoryConfig, updateHousehold } from "@/app/actions";
-import { filterLedgerEntries, type DirectionFilter, type LedgerMode, type LedgerStatusFilter } from "@/lib/ledger";
+import { filterLedgerEntries, isPaidMode, type DirectionFilter, type LedgerMode, type LedgerStatusFilter } from "@/lib/ledger";
 import { formatMoney, initials } from "@/lib/utils";
 import type { CategoryOption } from "@/lib/categories";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,9 @@ type Debt = {
   id: string; itemName: string; amount: number; category: string; paymentMethod: "CASH" | "CREDIT_CARD";
   notes: string | null; incurredAt: string; status: "DEBT" | "PAID"; paidAt: string | null;
   lender: Pick<Member, "id" | "name">; borrower: Pick<Member, "id" | "name">;
+  /** Who recorded the settle, on entries loaded for a paid view. Not necessarily
+   *  who handed over the money, and unknown for entries settled before the log existed. */
+  markedBy?: { name: string; occurredAt: string } | null;
 };
 type Props = {
   currentUser: Member;
@@ -36,15 +39,18 @@ type Props = {
   categories: CategoryOption[];
   debts: Debt[];
   openDebts: Debt[];
+  paidDebts: Debt[];
+  paidTotal: number;
+  paidLimit: number;
   openDebtCount: number;
   ledgerMode: LedgerMode;
   month: { key: string; label: string; previous: string; next: string };
-  summary: { youOwe: number; owedToYou: number; paidByYou: number; paidToYou: number; allTimeYouOwe: number; allTimeOwedToYou: number };
+  summary: { youOwe: number; owedToYou: number; paidByYou: number; paidToYou: number; allTimeYouOwe: number; allTimeOwedToYou: number; allTimePaidByYou: number; allTimePaidToYou: number };
   chart: { day: number; borrowed: number; lent: number }[];
 };
 
 export function DashboardClient(props: Props) {
-  const { currentUser, household, members, categories, debts, openDebts, openDebtCount, ledgerMode, month, summary, chart } = props;
+  const { currentUser, household, members, categories, debts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, ledgerMode, month, summary, chart } = props;
   const router = useRouter();
   const [entryOpen, setEntryOpen] = useState(false);
   const [entrySession, setEntrySession] = useState(0);
@@ -55,7 +61,8 @@ export function DashboardClient(props: Props) {
 
   function openEntry() { setEntrySession((session) => session + 1); setEntryOpen(true); }
   function ledgerUrl(mode: LedgerMode, monthKey = month.key) {
-    return `/dashboard?month=${monthKey}${mode === "OPEN" ? "&ledger=open" : ""}`;
+    const slug = { MONTH: "", OPEN: "open", PAID_MONTH: "paid", PAID_ALL: "paid-all" }[mode];
+    return `/dashboard?month=${monthKey}${slug ? `&ledger=${slug}` : ""}`;
   }
   function goToMonth(key: string) { router.push(ledgerUrl(ledgerMode, key)); }
   function showLedger(mode: LedgerMode, scroll = false) {
@@ -91,8 +98,8 @@ export function DashboardClient(props: Props) {
             items={[
               { key: "you-owe", label: "You owe this month", node: <SummaryCard label="You owe this month" value={summary.youOwe} currency={currency} icon={ArrowUpIcon} tone="peach" detail={`${formatMoney(summary.allTimeYouOwe, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} /> },
               { key: "owed-to-you", label: "Owed to you this month", node: <SummaryCard label="Owed to you this month" value={summary.owedToYou} currency={currency} icon={ArrowDownLeft} tone="green" detail={`${formatMoney(summary.allTimeOwedToYou, currency)} open overall`} onDetailClick={() => showLedger("OPEN", true)} /> },
-              { key: "you-paid", label: "You paid this month", node: <SummaryCard label="You paid this month" value={summary.paidByYou} currency={currency} icon={CheckCircle2} tone="blue" detail="Payments completed" /> },
-              { key: "paid-to-you", label: "Paid back to you", node: <SummaryCard label="Paid back to you" value={summary.paidToYou} currency={currency} icon={WalletCards} tone="gold" detail="Money returned" /> },
+              { key: "you-paid", label: "You paid this month", node: <SummaryCard label="You paid this month" value={summary.paidByYou} currency={currency} icon={CheckCircle2} tone="blue" detail="Payments completed" actionLabel="View payments" onDetailClick={() => showLedger("PAID_MONTH", true)} /> },
+              { key: "paid-to-you", label: "Paid back to you", node: <SummaryCard label="Paid back to you" value={summary.paidToYou} currency={currency} icon={WalletCards} tone="gold" detail="Money returned" actionLabel="View payments" onDetailClick={() => showLedger("PAID_MONTH", true)} /> },
             ]}
           />
         </section>
@@ -107,6 +114,9 @@ export function DashboardClient(props: Props) {
           month={month}
           monthlyDebts={debts}
           openDebts={openDebts}
+          paidDebts={paidDebts}
+          paidTotal={paidTotal}
+          paidLimit={paidLimit}
           openDebtCount={openDebtCount}
           currentUser={currentUser}
           currency={currency}
@@ -129,16 +139,19 @@ export function DashboardClient(props: Props) {
 
 function ArrowUpIcon(props: React.ComponentProps<typeof ArrowDownRight>) { return <ArrowDownRight {...props} className={`${props.className ?? ""} rotate-180`} />; }
 
-function SummaryCard({ label, value, currency, icon: Icon, tone, detail, onDetailClick }: { label: string; value: number; currency: string; icon: React.ElementType; tone: string; detail: string; onDetailClick?: () => void }) {
+function SummaryCard({ label, value, currency, icon: Icon, tone, detail, actionLabel = "View all unpaid", onDetailClick }: { label: string; value: number; currency: string; icon: React.ElementType; tone: string; detail: string; actionLabel?: string; onDetailClick?: () => void }) {
   const tones: Record<string, string> = { peach: "bg-[#f8e4da] text-[#9e4f37]", green: "bg-[#dcebdc] text-primary", blue: "bg-[#dfeaec] text-[#37616c]", gold: "bg-[#f5e9c9] text-[#80621f]" };
-  return <Card className="h-full p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p>{onDetailClick ? <button type="button" onClick={onDetailClick} className="mt-3 text-left text-xs font-bold text-primary hover:underline">{detail} · View all unpaid</button> : <p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p>}</Card>;
+  return <Card className="h-full p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p>{onDetailClick ? <button type="button" onClick={onDetailClick} className="mt-3 text-left text-xs font-bold text-primary hover:underline">{detail} · {actionLabel}</button> : <p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p>}</Card>;
 }
 
-function LedgerCard({ mode, month, monthlyDebts, openDebts, openDebtCount, currentUser, currency, summary, pending, canAdd, onModeChange, onAdd, run }: {
+function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, currentUser, currency, summary, pending, canAdd, onModeChange, onAdd, run }: {
   mode: LedgerMode;
   month: Props["month"];
   monthlyDebts: Debt[];
   openDebts: Debt[];
+  paidDebts: Debt[];
+  paidTotal: number;
+  paidLimit: number;
   openDebtCount: number;
   currentUser: Member;
   currency: string;
@@ -152,62 +165,84 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, openDebtCount, curre
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<LedgerStatusFilter>("ALL");
   const [direction, setDirection] = useState<DirectionFilter>("ALL");
-  const entries = mode === "OPEN" ? openDebts : monthlyDebts;
+  const settled = isPaidMode(mode);
+  const entries = settled ? paidDebts : mode === "OPEN" ? openDebts : monthlyDebts;
 
   const filtered = useMemo(() => filterLedgerEntries(entries, {
     mode, status, direction, currentUserId: currentUser.id, search,
   }), [currentUser.id, direction, entries, mode, search, status]);
 
+  // Paid views group by the day money actually changed hands, not the day the item was bought.
   const grouped = useMemo(() => {
     const groups = new Map<string, Debt[]>();
     filtered.forEach((debt) => {
-      const key = format(new Date(debt.incurredAt), "yyyy-MM-dd");
+      const basis = settled ? debt.paidAt ?? debt.incurredAt : debt.incurredAt;
+      const key = format(new Date(basis), "yyyy-MM-dd");
       groups.set(key, [...(groups.get(key) ?? []), debt]);
     });
     return [...groups.entries()];
-  }, [filtered]);
+  }, [filtered, settled]);
+
+  const tabs: { mode: LedgerMode; label: string; badge?: number }[] = [
+    { mode: "MONTH", label: "This month" },
+    { mode: "OPEN", label: "All unpaid", badge: openDebtCount },
+    { mode: "PAID_MONTH", label: "Paid this month" },
+    { mode: "PAID_ALL", label: "All paid" },
+  ];
 
   const directionOptions: { value: DirectionFilter; label: string }[] = [
     { value: "ALL", label: "All" },
-    { value: "YOU_OWE", label: "You owe" },
-    { value: "OWED_TO_YOU", label: "Owed to you" },
+    { value: "YOU_OWE", label: settled ? "You paid" : "You owe" },
+    { value: "OWED_TO_YOU", label: settled ? "Paid to you" : "Owed to you" },
   ];
+
+  const entryCount = (count: number) => `${count} ${count === 1 ? "entry" : "entries"}`;
+  const paymentCount = (count: number) => `${count} ${count === 1 ? "payment" : "payments"}`;
+  const heading = {
+    MONTH: { title: "Monthly ledger", subtitle: `${entryCount(monthlyDebts.length)} recorded in ${month.label}` },
+    OPEN: { title: "All unpaid", subtitle: `${entryCount(openDebtCount)} still open across all months` },
+    PAID_MONTH: { title: "Paid this month", subtitle: `${paymentCount(paidTotal)} settled in ${month.label}` },
+    PAID_ALL: {
+      title: "All paid",
+      subtitle: paidTotal > paidLimit
+        ? `${paymentCount(paidTotal)} settled in total, showing the ${paidLimit} most recent`
+        : `${paymentCount(paidTotal)} settled across all months`,
+    },
+  }[mode];
 
   return (
     <Card id="ledger" className="scroll-mt-24 overflow-hidden">
       <CardHeader className="gap-5 border-b border-border/70">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
           <div>
-            <CardTitle>{mode === "OPEN" ? "All unpaid" : "Monthly ledger"}</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {mode === "OPEN"
-                ? `${openDebtCount} ${openDebtCount === 1 ? "entry" : "entries"} still open across all months`
-                : `${monthlyDebts.length} ${monthlyDebts.length === 1 ? "entry" : "entries"} recorded in ${month.label}`}
-            </p>
+            <CardTitle>{heading.title}</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">{heading.subtitle}</p>
           </div>
-          <div role="group" aria-label="Ledger view" className="grid grid-cols-2 rounded-xl bg-secondary/80 p-1">
-            <button
-              type="button"
-              aria-pressed={mode === "MONTH"}
-              onClick={() => onModeChange("MONTH")}
-              className={`rounded-lg px-3 py-2 text-xs font-bold transition sm:px-4 ${mode === "MONTH" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              This month
-            </button>
-            <button
-              type="button"
-              aria-pressed={mode === "OPEN"}
-              onClick={() => onModeChange("OPEN")}
-              className={`flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition sm:px-4 ${mode === "OPEN" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              All unpaid <span className="rounded-full bg-[#f8e4da] px-1.5 py-0.5 text-[10px] text-[#9e4f37]">{openDebtCount}</span>
-            </button>
+          <div role="group" aria-label="Ledger view" className="grid grid-cols-2 gap-1 rounded-xl bg-secondary/80 p-1 sm:grid-cols-4">
+            {tabs.map((tab) => (
+              <button
+                key={tab.mode}
+                type="button"
+                aria-pressed={mode === tab.mode}
+                onClick={() => onModeChange(tab.mode)}
+                className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-bold transition sm:px-3 ${mode === tab.mode ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                {tab.label}
+                {tab.badge !== undefined && <span className="rounded-full bg-[#f8e4da] px-1.5 py-0.5 text-[10px] text-[#9e4f37]">{tab.badge}</span>}
+              </button>
+            ))}
           </div>
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {mode === "OPEN" ? (
-            <div role="group" aria-label="Unpaid direction" className="flex flex-wrap gap-1.5">
+          {mode === "MONTH" ? (
+            <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} aria-label="Entry status" className="h-10 rounded-xl border border-input bg-background px-3 text-sm font-semibold outline-none">
+              <option value="ALL">All statuses</option>
+              <option value="DEBT">Debt</option>
+              <option value="PAID">Paid</option>
+            </select>
+          ) : (
+            <div role="group" aria-label={settled ? "Payment direction" : "Unpaid direction"} className="flex flex-wrap gap-1.5">
               {directionOptions.map((option) => (
                 <button
                   key={option.value}
@@ -220,32 +255,28 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, openDebtCount, curre
                 </button>
               ))}
             </div>
-          ) : (
-            <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} aria-label="Entry status" className="h-10 rounded-xl border border-input bg-background px-3 text-sm font-semibold outline-none">
-              <option value="ALL">All statuses</option>
-              <option value="DEBT">Debt</option>
-              <option value="PAID">Paid</option>
-            </select>
           )}
           <div className="relative min-w-0 flex-1 sm:max-w-72">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={mode === "OPEN" ? "Search unpaid entries" : "Search entries"} className="pl-9" />
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={settled ? "Search payments" : mode === "OPEN" ? "Search unpaid entries" : "Search entries"} className="pl-9" />
           </div>
         </div>
       </CardHeader>
 
       <CardContent className="pt-5 sm:pt-6">
         {mode === "OPEN" && (
-          <div className="mb-6 grid gap-2 rounded-2xl bg-[#244b37] p-3 text-white sm:grid-cols-2 sm:p-4">
-            <div className="rounded-xl bg-white/7 px-3 py-2.5">
-              <p className="text-[11px] font-bold uppercase tracking-[.12em] text-white/55">You owe</p>
-              <p className="mt-1 font-display text-xl font-semibold">{formatMoney(summary.allTimeYouOwe, currency)}</p>
-            </div>
-            <div className="rounded-xl bg-white/7 px-3 py-2.5">
-              <p className="text-[11px] font-bold uppercase tracking-[.12em] text-white/55">Owed to you</p>
-              <p className="mt-1 font-display text-xl font-semibold text-[#f2d68d]">{formatMoney(summary.allTimeOwedToYou, currency)}</p>
-            </div>
-          </div>
+          <LedgerTotalsBanner
+            left={{ label: "You owe", value: summary.allTimeYouOwe }}
+            right={{ label: "Owed to you", value: summary.allTimeOwedToYou }}
+            currency={currency}
+          />
+        )}
+        {settled && (
+          <LedgerTotalsBanner
+            left={{ label: "You paid", value: mode === "PAID_ALL" ? summary.allTimePaidByYou : summary.paidByYou }}
+            right={{ label: "Paid to you", value: mode === "PAID_ALL" ? summary.allTimePaidToYou : summary.paidToYou }}
+            currency={currency}
+          />
         )}
 
         {grouped.length ? (
@@ -254,21 +285,37 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, openDebtCount, curre
               <div key={date}>
                 <div className="mb-3 flex items-center gap-3">
                   <p className="text-xs font-bold uppercase tracking-[.16em] text-muted-foreground">
-                    {format(new Date(`${date}T12:00:00`), mode === "OPEN" ? "EEEE, MMMM d, yyyy" : "EEEE, MMMM d")}
+                    {settled && "Settled "}
+                    {format(new Date(`${date}T12:00:00`), mode === "MONTH" || mode === "PAID_MONTH" ? "EEEE, MMMM d" : "EEEE, MMMM d, yyyy")}
                   </p>
                   <div className="h-px flex-1 bg-border" />
                 </div>
                 <div className="space-y-2">
-                  {dateEntries.map((debt) => <DebtRow key={debt.id} debt={debt} currentUser={currentUser} currency={currency} pending={pending} run={run} />)}
+                  {dateEntries.map((debt) => <DebtRow key={debt.id} debt={debt} settled={settled} currentUser={currentUser} currency={currency} pending={pending} run={run} />)}
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <EmptyLedger mode={mode} hasEntries={entries.length > 0} onAdd={onAdd} canAdd={canAdd} />
+          <EmptyLedger mode={mode} month={month} hasEntries={entries.length > 0} capped={mode === "PAID_ALL" && paidTotal > paidLimit} limit={paidLimit} onAdd={onAdd} canAdd={canAdd} />
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function LedgerTotalsBanner({ left, right, currency }: { left: { label: string; value: number }; right: { label: string; value: number }; currency: string }) {
+  return (
+    <div className="mb-6 grid gap-2 rounded-2xl bg-[#244b37] p-3 text-white sm:grid-cols-2 sm:p-4">
+      <div className="rounded-xl bg-white/7 px-3 py-2.5">
+        <p className="text-[11px] font-bold uppercase tracking-[.12em] text-white/55">{left.label}</p>
+        <p className="mt-1 font-display text-xl font-semibold">{formatMoney(left.value, currency)}</p>
+      </div>
+      <div className="rounded-xl bg-white/7 px-3 py-2.5">
+        <p className="text-[11px] font-bold uppercase tracking-[.12em] text-white/55">{right.label}</p>
+        <p className="mt-1 font-display text-xl font-semibold text-[#f2d68d]">{formatMoney(right.value, currency)}</p>
+      </div>
+    </div>
   );
 }
 
@@ -277,9 +324,14 @@ function BalanceCard({ currentUser, partner, summary, currency }: { currentUser:
   return <Card className="relative overflow-hidden bg-[#244b37] text-white"><div className="absolute -right-16 -top-16 size-52 rounded-full border-[36px] border-white/5"/><CardHeader><p className="text-xs font-bold uppercase tracking-[.18em] text-white/60">All-time balance</p><CardTitle className="text-white">Between you two</CardTitle></CardHeader><CardContent><div className="mb-6 flex items-center"><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#dcebdc] font-bold text-primary">{initials(currentUser.name)}</div><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><HandCoins className="size-5 text-[#f2d68d]"/><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#f4dfd5] font-bold text-[#9e4f37]">{partner ? initials(partner.name) : "?"}</div></div><p className="text-sm text-white/65">{!partner ? "Invite your partner to calculate your balance." : net > 0 ? `${partner.name.split(" ")[0]} owes you` : net < 0 ? `You owe ${partner.name.split(" ")[0]}` : "You’re perfectly even"}</p><p className="mt-1 font-display text-4xl font-semibold">{formatMoney(Math.abs(net), currency)}</p><div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-[#f2d68d]" style={{ width: `${Math.min(100, Math.max(8, Math.abs(net) / Math.max(summary.allTimeOwedToYou + summary.allTimeYouOwe, 1) * 100))}%` }} /></div></CardContent></Card>;
 }
 
-function DebtRow({ debt, currentUser, currency, pending, run }: { debt: Debt; currentUser: Member; currency: string; pending: boolean; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
+function DebtRow({ debt, settled, currentUser, currency, pending, run }: { debt: Debt; settled: boolean; currentUser: Member; currency: string; pending: boolean; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
   const youBorrowed = debt.borrower.id === currentUser.id;
-  return <div className="group flex items-center gap-3 rounded-2xl border border-transparent bg-secondary/45 p-3 transition hover:border-border hover:bg-card sm:gap-4 sm:p-4"><div className={`grid size-11 shrink-0 place-items-center rounded-2xl ${debt.paymentMethod === "CREDIT_CARD" ? "bg-[#e7e2f4] text-[#65548d]" : "bg-[#e1ebda] text-primary"}`}>{debt.paymentMethod === "CREDIT_CARD" ? <CreditCard className="size-5" /> : <Banknote className="size-5" />}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate font-semibold">{debt.itemName}</p><Badge className={debt.status === "PAID" ? "bg-[#dcebdc] text-primary" : "bg-[#f8e4da] text-[#9e4f37]"}>{debt.status === "PAID" ? "Paid" : "Debt"}</Badge></div><p className="mt-1 truncate text-xs text-muted-foreground">{debt.category} · {debt.paymentMethod === "CREDIT_CARD" ? "Credit card" : "Cash"} · {format(new Date(debt.incurredAt), "h:mm a")}</p>{debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}</div><div className="text-right"><p className={`font-display text-base font-bold sm:text-lg ${youBorrowed ? "text-[#a6533b]" : "text-primary"}`}>{youBorrowed ? "−" : "+"}{formatMoney(debt.amount, currency)}</p><p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">{debt.borrower.name.split(" ")[0]} owes {debt.lender.name.split(" ")[0]}</p></div><div className="flex shrink-0 gap-1"><button disabled={pending} aria-label={debt.status === "DEBT" ? "Mark paid" : "Mark unpaid"} onClick={() => run(() => setDebtStatus(debt.id, debt.status === "DEBT" ? "PAID" : "DEBT"))} className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"><Check className="size-4" /></button><button disabled={pending} aria-label="Delete entry" onClick={() => { if (window.confirm(`Delete “${debt.itemName}”?`)) run(() => deleteDebt(debt.id)); }} className="hidden size-9 place-items-center rounded-xl text-muted-foreground hover:bg-red-50 hover:text-red-600 sm:grid"><Trash2 className="size-4" /></button></div></div>;
+  // In a settled view the group header already carries the payment date, so the
+  // row shows when the expense was incurred instead.
+  const meta = settled
+    ? `incurred ${format(new Date(debt.incurredAt), "MMM d")}`
+    : format(new Date(debt.incurredAt), "h:mm a");
+  return <div className="group flex items-center gap-3 rounded-2xl border border-transparent bg-secondary/45 p-3 transition hover:border-border hover:bg-card sm:gap-4 sm:p-4"><div className={`grid size-11 shrink-0 place-items-center rounded-2xl ${debt.paymentMethod === "CREDIT_CARD" ? "bg-[#e7e2f4] text-[#65548d]" : "bg-[#e1ebda] text-primary"}`}>{debt.paymentMethod === "CREDIT_CARD" ? <CreditCard className="size-5" /> : <Banknote className="size-5" />}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate font-semibold">{debt.itemName}</p><Badge className={debt.status === "PAID" ? "bg-[#dcebdc] text-primary" : "bg-[#f8e4da] text-[#9e4f37]"}>{debt.status === "PAID" ? "Paid" : "Debt"}</Badge></div><p className="mt-1 truncate text-xs text-muted-foreground">{debt.category} · {debt.paymentMethod === "CREDIT_CARD" ? "Credit card" : "Cash"} · {meta}</p>{settled && debt.markedBy && <p className="mt-1 truncate text-xs font-medium text-primary">Marked by {debt.markedBy.name.split(" ")[0]}</p>}{debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}</div><div className="text-right"><p className={`font-display text-base font-bold sm:text-lg ${youBorrowed ? "text-[#a6533b]" : "text-primary"}`}>{youBorrowed ? "−" : "+"}{formatMoney(debt.amount, currency)}</p><p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">{debt.borrower.name.split(" ")[0]} owes {debt.lender.name.split(" ")[0]}</p></div><div className="flex shrink-0 gap-1"><button disabled={pending} aria-label={debt.status === "DEBT" ? "Mark paid" : "Mark unpaid"} onClick={() => run(() => setDebtStatus(debt.id, debt.status === "DEBT" ? "PAID" : "DEBT"))} className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"><Check className="size-4" /></button><button disabled={pending} aria-label="Delete entry" onClick={() => { if (window.confirm(`Delete “${debt.itemName}”?`)) run(() => deleteDebt(debt.id)); }} className="hidden size-9 place-items-center rounded-xl text-muted-foreground hover:bg-red-50 hover:text-red-600 sm:grid"><Trash2 className="size-4" /></button></div></div>;
 }
 
 function SettingsPanel({ currentUser, household, members, categories, pending, onClose, run }: { currentUser: Member; household: Props["household"]; members: Member[]; categories: CategoryOption[]; pending: boolean; onClose: () => void; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
@@ -352,15 +404,22 @@ function InviteBanner({ household, pending, onJoin }: { household: Props["househ
   return <div className="mb-7 rounded-3xl border border-[#d8c88e] bg-[#fff8df] p-5 sm:flex sm:items-center sm:justify-between"><div className="flex gap-4"><div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#f5e9c9] text-[#80621f]"><UserPlus className="size-5" /></div><div><p className="font-bold">Connect with your partner</p><p className="mt-1 text-sm leading-6 text-[#796d4d]">Share code <strong className="font-mono tracking-widest">{household.inviteCode}</strong>, or join the household they created.</p></div></div><div className="mt-4 sm:mt-0">{joining ? <div className="flex gap-2"><Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="INVITE CODE" className="w-36 bg-white uppercase"/><Button disabled={pending || !code} onClick={() => onJoin(code)}>Join</Button></div> : <Button variant="outline" onClick={() => setJoining(true)} className="bg-white">I have their code</Button>}</div></div>;
 }
 
-function EmptyLedger({ mode, hasEntries, onAdd, canAdd }: { mode: LedgerMode; hasEntries: boolean; onAdd: () => void; canAdd: boolean }) {
+function EmptyLedger({ mode, month, hasEntries, capped, limit, onAdd, canAdd }: { mode: LedgerMode; month: Props["month"]; hasEntries: boolean; capped: boolean; limit: number; onAdd: () => void; canAdd: boolean }) {
   const filteredEmpty = hasEntries;
-  const title = filteredEmpty ? "No entries match those filters" : mode === "OPEN" ? "You’re all settled" : "Nothing recorded here yet";
+  const settled = isPaidMode(mode);
+  const emptyCopy = {
+    MONTH: { title: "Nothing recorded here yet", description: canAdd ? "Add your first cash or credit-card purchase for this month." : "Invite your partner first, then you can start your shared ledger." },
+    OPEN: { title: "You’re all settled", description: "There are no unpaid entries between you two." },
+    PAID_MONTH: { title: "No payments yet", description: `Nothing has been settled in ${month.label}. Mark an entry paid and it will show up here.` },
+    PAID_ALL: { title: "No payment history yet", description: "Once you mark entries as paid, every settled payment is logged here." },
+  }[mode];
+  const title = filteredEmpty ? "No entries match those filters" : emptyCopy.title;
   const description = filteredEmpty
-    ? "Try another direction or search term."
-    : mode === "OPEN"
-      ? "There are no unpaid entries between you two."
-      : canAdd ? "Add your first cash or credit-card purchase for this month." : "Invite your partner first, then you can start your shared ledger.";
-  return <div className="grid place-items-center py-14 text-center"><div className="mb-4 grid size-14 place-items-center rounded-2xl bg-secondary text-primary">{mode === "OPEN" && !filteredEmpty ? <CheckCircle2 className="size-6" /> : <ReceiptText className="size-6" />}</div><h3 className="font-display text-lg font-semibold">{title}</h3><p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">{description}</p>{mode === "MONTH" && !filteredEmpty && canAdd && <Button onClick={onAdd} className="mt-5"><Plus className="size-4" />Add first entry</Button>}</div>;
+    ? capped
+      ? `Only the ${limit} most recent payments are searched here. An older payment may exist outside that range.`
+      : "Try another direction or search term."
+    : emptyCopy.description;
+  return <div className="grid place-items-center py-14 text-center"><div className="mb-4 grid size-14 place-items-center rounded-2xl bg-secondary text-primary">{(mode === "OPEN" || settled) && !filteredEmpty ? <CheckCircle2 className="size-6" /> : <ReceiptText className="size-6" />}</div><h3 className="font-display text-lg font-semibold">{title}</h3><p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">{description}</p>{mode === "MONTH" && !filteredEmpty && canAdd && <Button onClick={onAdd} className="mt-5"><Plus className="size-4" />Add first entry</Button>}</div>;
 }
 function Field({ label, optional, children }: { label: string; optional?: boolean; children: React.ReactNode }) { return <label className="block text-sm font-semibold">{label}{optional && <span className="ml-1 font-normal text-muted-foreground">(optional)</span>}<div className="mt-2">{children}</div></label>; }
 function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <div className="relative"><select {...props} className="h-11 w-full appearance-none rounded-xl border border-input bg-background px-3.5 pr-9 text-sm outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/10"/><ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/></div>; }

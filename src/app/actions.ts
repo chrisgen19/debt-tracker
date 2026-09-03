@@ -49,12 +49,18 @@ export async function createDebt(input: unknown): Promise<ActionResult> {
     }
     const incurredAt = new Date(parsed.data.incurredAt);
     if (Number.isNaN(incurredAt.getTime())) return { ok: false, error: "Choose a valid date and time" };
+    const settledNow = parsed.data.status === "PAID";
+    const paidAt = settledNow ? new Date() : null;
     await prisma.debt.create({
       data: {
         itemName: parsed.data.itemName, amount: parsed.data.amount, category: parsed.data.category,
         paymentMethod: parsed.data.paymentMethod, lenderId: parsed.data.lenderId, borrowerId: parsed.data.borrowerId,
         incurredAt, notes: parsed.data.notes || null, status: parsed.data.status,
-        paidAt: parsed.data.status === "PAID" ? new Date() : null, householdId: user.householdId!, createdById: user.id,
+        paidAt, householdId: user.householdId!, createdById: user.id,
+        // An entry logged as already settled belongs in the payment history too.
+        paymentEvents: settledNow
+          ? { create: { type: "PAID", amount: parsed.data.amount, occurredAt: paidAt!, householdId: user.householdId!, actorId: user.id } }
+          : undefined,
       },
     });
     revalidatePath("/dashboard");
@@ -65,9 +71,30 @@ export async function createDebt(input: unknown): Promise<ActionResult> {
 export async function setDebtStatus(id: string, status: "DEBT" | "PAID"): Promise<ActionResult> {
   try {
     const user = await actor();
-    const debt = await prisma.debt.findFirst({ where: { id, householdId: user.householdId! }, select: { id: true } });
+    const debt = await prisma.debt.findFirst({ where: { id, householdId: user.householdId! }, select: { amount: true } });
     if (!debt) return { ok: false, error: "Debt not found" };
-    await prisma.debt.update({ where: { id }, data: { status, paidAt: status === "PAID" ? new Date() : null } });
+    // The status guard lives in the UPDATE rather than in a preceding read: two
+    // requests racing on the same entry would otherwise both see the old status
+    // and each append an event for what is really one transition.
+    const applied = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.debt.updateMany({
+        where: { id, householdId: user.householdId!, status: { not: status } },
+        data: { status },
+      });
+      if (count === 0) return false;
+      // Stamped only once the row lock is held, so a request that stalled before
+      // the transaction cannot write a timestamp older than one already committed.
+      const occurredAt = new Date();
+      await tx.debt.update({ where: { id }, data: { paidAt: status === "PAID" ? occurredAt : null } });
+      await tx.paymentEvent.create({
+        data: {
+          type: status === "PAID" ? "PAID" : "UNPAID", amount: debt.amount, occurredAt,
+          debtId: id, householdId: user.householdId!, actorId: user.id,
+        },
+      });
+      return true;
+    });
+    if (!applied) return { ok: true };
     revalidatePath("/dashboard");
     return { ok: true, message: status === "PAID" ? "Marked as paid" : "Moved back to debt" };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update this debt" }; }

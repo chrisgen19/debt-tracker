@@ -17,6 +17,11 @@ enum DebtStatus {
   PAID
 }
 
+enum PaymentEventType {
+  PAID
+  UNPAID
+}
+
 model User {
   id            String    @id
   name          String
@@ -33,6 +38,7 @@ model User {
   lentDebts     Debt[]     @relation("DebtLender")
   borrowedDebts Debt[]     @relation("DebtBorrower")
   createdDebts  Debt[]     @relation("DebtCreator")
+  paymentEvents PaymentEvent[] @relation("PaymentActor")
 
   @@index([householdId])
   @@map("user")
@@ -97,6 +103,7 @@ model Household {
   updatedAt      DateTime @updatedAt
   members        User[]
   debts          Debt[]
+  paymentEvents  PaymentEvent[]
 }
 
 model Debt {
@@ -121,7 +128,32 @@ model Debt {
   createdById String
   createdBy   User      @relation("DebtCreator", fields: [createdById], references: [id], onDelete: Restrict)
 
+  paymentEvents PaymentEvent[]
+
   @@index([householdId, incurredAt])
   @@index([borrowerId, status])
   @@index([lenderId, status])
+  @@index([householdId, status, paidAt])
+}
+
+/// Append-only log of every settle / un-settle. `Debt.paidAt` stays the fast
+/// current-state field; this table is what survives an entry being un-paid.
+model PaymentEvent {
+  id         String           @id @default(cuid())
+  type       PaymentEventType
+  amount     Decimal          @db.Decimal(12, 2)
+  occurredAt DateTime         @default(now())
+  createdAt  DateTime         @default(now())
+
+  debtId      String
+  debt        Debt      @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  /// Who recorded the transition. Null for rows seeded by the backfill, where
+  /// the person who marked the entry paid was never captured.
+  actorId     String?
+  actor       User?     @relation("PaymentActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([householdId, occurredAt])
+  @@index([debtId, occurredAt])
 }

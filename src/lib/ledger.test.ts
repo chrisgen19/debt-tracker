@@ -27,4 +27,21 @@ describe("filterLedgerEntries", () => {
     const paid = filterLedgerEntries(entries, { mode: "MONTH", status: "PAID", direction: "YOU_OWE", currentUserId: "me", search: "" });
     assert.deepEqual(paid.map((entry) => entry.itemName), ["Coffee"]);
   });
+
+  it("splits a paid view by who settled the entry", () => {
+    const settled = [
+      ...entries.filter((entry) => entry.status === "PAID"),
+      { itemName: "Fuel", category: "Travel", notes: null, status: "PAID" as const, borrower: { id: "partner", name: "Pat" }, lender: { id: "me", name: "Chris" } },
+    ];
+    const youPaid = filterLedgerEntries(settled, { mode: "PAID_MONTH", status: "ALL", direction: "YOU_OWE", currentUserId: "me", search: "" });
+    const paidToYou = filterLedgerEntries(settled, { mode: "PAID_MONTH", status: "ALL", direction: "OWED_TO_YOU", currentUserId: "me", search: "" });
+    assert.deepEqual(youPaid.map((entry) => entry.itemName), ["Coffee"]);
+    assert.deepEqual(paidToYou.map((entry) => entry.itemName), ["Fuel"]);
+  });
+
+  it("ignores the status filter in paid views, which are already all settled", () => {
+    const settled = entries.filter((entry) => entry.status === "PAID");
+    const result = filterLedgerEntries(settled, { mode: "PAID_ALL", status: "DEBT", direction: "ALL", currentUserId: "me", search: "" });
+    assert.deepEqual(result.map((entry) => entry.itemName), ["Coffee"]);
+  });
 });
