@@ -25,3 +25,7 @@ Vercel CLI or create a Vercel project for it.
   Never commit to `main` directly.
 - The container healthcheck hits `/api/health`, which deliberately touches nothing
   but the web server so a database blip cannot restart a healthy container.
+- The container sets `TZ=Asia/Manila`. Month boundaries on the dashboard are built
+  from server local time, so the container timezone has to match the household's.
+  A second household in another timezone would need this to become per-household
+  data rather than a container-wide setting.

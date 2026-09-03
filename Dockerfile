@@ -7,6 +7,11 @@ RUN apt-get update \
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
+# The dashboard derives month boundaries from server local time (new Date(y, m, 1))
+# while the browser formats the stored timestamps, so the container has to agree
+# with the household's wall clock or entries near a month edge land in the wrong
+# month. Node's bundled ICU supplies the zone data; no tzdata package needed.
+ENV TZ=Asia/Manila
 WORKDIR /app
 
 FROM base AS build
