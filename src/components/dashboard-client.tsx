@@ -1,18 +1,19 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import {
   ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight, Banknote, CalendarDays, Check, CheckCircle2,
   ChevronDown, CreditCard, Ellipsis, HandCoins, Home, LayoutDashboard, LogOut,
-  Plus, ReceiptText, Search, Settings2, Trash2, UserPlus, Users, WalletCards, X,
+  Plus, ReceiptText, Search, Settings2, Share2, Trash2, UserPlus, Users, WalletCards, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import { createDebt, deleteDebt, joinHousehold, setDebtStatus, updateCategoryConfig, updateHousehold } from "@/app/actions";
 import { filterLedgerEntries, isPaidMode, type DirectionFilter, type LedgerMode, type LedgerStatusFilter } from "@/lib/ledger";
+import { clearInstalledAppState } from "@/lib/pwa";
 import { formatMoney, initials } from "@/lib/utils";
 import type { CategoryOption } from "@/lib/categories";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { EntryModal } from "@/components/entry-modal";
 import { CategorySettings } from "@/components/category-settings";
 import { SummaryCarousel } from "@/components/summary-carousel";
+import { AppBadge } from "@/components/app-badge";
 
 type Member = { id: string; name: string; email: string };
 type Debt = {
@@ -47,12 +49,27 @@ type Props = {
   month: { key: string; label: string; previous: string; next: string };
   summary: { youOwe: number; owedToYou: number; paidByYou: number; paidToYou: number; allTimeYouOwe: number; allTimeOwedToYou: number; allTimePaidByYou: number; allTimePaidToYou: number };
   chart: { day: number; borrowed: number; lent: number }[];
+  /** Set by the `?new=1` app shortcut: open the entry sheet straight away. */
+  openEntryOnLoad: boolean;
 };
 
+/** Web Share support is a fixed property of the browser, so there is nothing to subscribe to. */
+const noSubscribe = () => () => {};
+const canUseWebShare = () => typeof navigator.share === "function";
+
+const LEDGER_SLUGS: Record<LedgerMode, string> = { MONTH: "", OPEN: "open", PAID_MONTH: "paid", PAID_ALL: "paid-all" };
+
+function ledgerUrl(mode: LedgerMode, monthKey: string) {
+  const slug = LEDGER_SLUGS[mode];
+  return `/dashboard?month=${monthKey}${slug ? `&ledger=${slug}` : ""}`;
+}
+
 export function DashboardClient(props: Props) {
-  const { currentUser, household, members, categories, debts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, ledgerMode, month, summary, chart } = props;
+  const { currentUser, household, members, categories, debts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, ledgerMode, month, summary, chart, openEntryOnLoad } = props;
   const router = useRouter();
-  const [entryOpen, setEntryOpen] = useState(false);
+  // The "Add an entry" app shortcut lands on `?new=1`. Opening from initial state
+  // rather than an effect means the sheet is never briefly visible as closed.
+  const [entryOpen, setEntryOpen] = useState(openEntryOnLoad);
   const [entrySession, setEntrySession] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -60,15 +77,16 @@ export function DashboardClient(props: Props) {
   const partner = members.find((member) => member.id !== currentUser.id);
 
   function openEntry() { setEntrySession((session) => session + 1); setEntryOpen(true); }
-  function ledgerUrl(mode: LedgerMode, monthKey = month.key) {
-    const slug = { MONTH: "", OPEN: "open", PAID_MONTH: "paid", PAID_ALL: "paid-all" }[mode];
-    return `/dashboard?month=${monthKey}${slug ? `&ledger=${slug}` : ""}`;
-  }
   function goToMonth(key: string) { router.push(ledgerUrl(ledgerMode, key)); }
   function showLedger(mode: LedgerMode, scroll = false) {
-    router.push(ledgerUrl(mode), { scroll: false });
+    router.push(ledgerUrl(mode, month.key), { scroll: false });
     if (scroll) document.getElementById("ledger")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+  useEffect(() => {
+    // Drop the shortcut flag so a refresh or a back-navigation does not reopen the sheet.
+    if (openEntryOnLoad) router.replace(ledgerUrl(ledgerMode, month.key), { scroll: false });
+  }, [openEntryOnLoad, ledgerMode, month.key, router]);
+
   function run(action: () => Promise<{ ok: boolean; message?: string; error?: string }>) {
     startTransition(async () => {
       const result = await action();
@@ -78,7 +96,7 @@ export function DashboardClient(props: Props) {
 
   return (
     <div className="min-h-svh bg-background text-foreground">
-      <header className="sticky top-0 z-30 border-b border-border/70 bg-background/90 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 border-b border-border/70 bg-background/90 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
         <div className="mx-auto flex h-18 max-w-[1440px] items-center justify-between px-4 sm:px-6 lg:px-10">
           <div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground"><ArrowDownRight className="size-5" /></div><div><p className="font-display text-lg font-bold leading-none">Owewell</p><p className="mt-1 hidden text-[11px] font-semibold text-muted-foreground sm:block">{household.name}</p></div></div>
           <nav className="hidden items-center rounded-xl bg-secondary/70 p-1 md:flex"><span className="flex items-center gap-2 rounded-lg bg-card px-4 py-2 text-sm font-semibold shadow-sm"><LayoutDashboard className="size-4" />Overview</span><button onClick={() => setSettingsOpen(true)} className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground"><Users className="size-4" />Household</button></nav>
@@ -86,7 +104,7 @@ export function DashboardClient(props: Props) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1440px] px-4 pb-28 pt-7 sm:px-6 lg:px-10 lg:pb-12">
+      <main className="mx-auto max-w-[1440px] px-4 pb-[calc(env(safe-area-inset-bottom)+7rem)] pt-7 sm:px-6 lg:px-10 lg:pb-12">
         {!partner && <InviteBanner household={household} pending={pending} onJoin={(code) => run(() => joinHousehold(code))} />}
         <section className="mb-6 grid grid-cols-1 gap-6 sm:grid-cols-[minmax(0,1fr)_auto] xl:grid-cols-[minmax(0,1.55fr)_minmax(0,.85fr)]">
           <div className="order-1 sm:self-end"><p className="mb-2 text-sm font-semibold text-muted-foreground">Hello, {currentUser.name.split(" ")[0]} <span aria-hidden>👋</span></p><h1 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">Here’s your money picture.</h1></div>
@@ -133,8 +151,9 @@ export function DashboardClient(props: Props) {
         />
       </main>
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-5 py-3 backdrop-blur md:hidden"><div className="mx-auto flex max-w-sm items-center justify-around"><button className="flex flex-col items-center gap-1 text-[11px] font-bold text-primary"><Home className="size-5" />Home</button><button disabled={!partner} onClick={openEntry} className="-mt-8 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-50"><Plus className="size-6" /></button><button onClick={() => setSettingsOpen(true)} className="flex flex-col items-center gap-1 text-[11px] font-bold text-muted-foreground"><Settings2 className="size-5" />Settings</button></div></div>
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pl-[calc(env(safe-area-inset-left)+1.25rem)] pr-[calc(env(safe-area-inset-right)+1.25rem)] pt-3 backdrop-blur md:hidden"><div className="mx-auto flex max-w-sm items-center justify-around"><button className="flex flex-col items-center gap-1 text-[11px] font-bold text-primary"><Home className="size-5" />Home</button><button disabled={!partner} onClick={openEntry} className="-mt-8 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-50"><Plus className="size-6" /></button><button onClick={() => setSettingsOpen(true)} className="flex flex-col items-center gap-1 text-[11px] font-bold text-muted-foreground"><Settings2 className="size-5" />Settings</button></div></div>
 
+      <AppBadge count={openDebtCount} />
       {partner && <EntryModal key={entrySession} open={entryOpen} currentUser={currentUser} partner={partner} currency={currency} categories={categories} pending={pending} onClose={() => setEntryOpen(false)} onSubmit={(input) => run(async () => { const result = await createDebt(input); if (result.ok) setEntryOpen(false); return result; })} />}
       {settingsOpen && <SettingsPanel currentUser={currentUser} household={household} members={members} categories={categories} pending={pending} onClose={() => setSettingsOpen(false)} run={run} />}
     </div>
@@ -381,12 +400,37 @@ function DebtRow({ debt, settled, currentUser, currency, pending, run }: { debt:
 function SettingsPanel({ currentUser, household, members, categories, pending, onClose, run }: { currentUser: Member; household: Props["household"]; members: Member[]; categories: CategoryOption[]; pending: boolean; onClose: () => void; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
+  // `navigator` does not exist during the server render, so the server reports
+  // no support and the client corrects itself after hydration.
+  const canShare = useSyncExternalStore(noSubscribe, canUseWebShare, () => false);
   const partner = members.find((m) => m.id !== currentUser.id);
   function save(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); run(() => updateHousehold({ name: String(data.get("name")), currency: String(data.get("currency")) })); }
-  async function copy() { await navigator.clipboard.writeText(household.inviteCode); setCopied(true); toast.success("Invite code copied"); setTimeout(() => setCopied(false), 1600); }
+  async function copy() {
+    try {
+      // The Clipboard API needs a secure context and can still be denied outright.
+      await navigator.clipboard.writeText(household.inviteCode);
+      setCopied(true);
+      toast.success("Invite code copied");
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      toast.error(`Copy this code manually: ${household.inviteCode}`);
+    }
+  }
+  async function share() {
+    try {
+      // Must be called straight from the click, or the user gesture is spent.
+      await navigator.share({
+        title: "Owewell invite",
+        text: `Join our Owewell household with invite code ${household.inviteCode}`,
+      });
+    } catch (error) {
+      // Closing the share sheet is not a failure worth reporting.
+      if ((error as Error).name !== "AbortError") await copy();
+    }
+  }
   return (
     <div className="fixed inset-0 z-50 bg-[#10251b]/40 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <aside className="ml-auto flex h-full w-full max-w-lg flex-col overflow-y-auto bg-card p-6 shadow-2xl sm:p-8">
+      <aside className="ml-auto flex h-full w-full max-w-lg flex-col overflow-y-auto bg-card p-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-[calc(env(safe-area-inset-top)+1.5rem)] shadow-2xl sm:p-8 sm:pb-[calc(env(safe-area-inset-bottom)+2rem)] sm:pt-[calc(env(safe-area-inset-top)+2rem)]">
         <div className="mb-8 flex items-center justify-between">
           <div>
             <p className="text-xs font-bold uppercase tracking-[.18em] text-primary">Your space</p>
@@ -431,10 +475,15 @@ function SettingsPanel({ currentUser, household, members, categories, pending, o
             <span className="font-mono text-lg font-bold tracking-[.18em] text-primary">{household.inviteCode}</span>
             <span className="text-xs font-bold text-primary">{copied ? "Copied!" : "Copy code"}</span>
           </button>
+          {canShare && (
+            <Button type="button" variant="outline" onClick={share} className="mt-2 w-full">
+              <Share2 className="size-4" /> Share invite
+            </Button>
+          )}
         </section>
 
         <div className="mt-auto pt-10">
-          <Button variant="outline" className="w-full text-red-600" onClick={async () => { await authClient.signOut(); router.push("/login"); router.refresh(); }}>
+          <Button variant="outline" className="w-full text-red-600" onClick={async () => { await authClient.signOut(); clearInstalledAppState(); router.push("/login"); router.refresh(); }}>
             <LogOut className="size-4" /> Sign out
           </Button>
         </div>

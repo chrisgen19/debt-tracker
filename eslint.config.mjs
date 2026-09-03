@@ -5,6 +5,13 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  {
+    // The service worker runs in ServiceWorkerGlobalScope, not on `window`.
+    files: ["public/sw.js"],
+    languageOptions: {
+      globals: { self: "readonly", caches: "readonly", clients: "readonly", fetch: "readonly", Request: "readonly", Response: "readonly", URL: "readonly" },
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
