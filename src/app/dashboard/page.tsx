@@ -107,7 +107,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
     const settled = debt.paymentEvents[0];
     return {
       ...serializeDebt(debt),
-      paidBy: settled ? { name: settled.actor.name, occurredAt: settled.occurredAt.toISOString() } : null,
+      markedBy: settled?.actor ? { name: settled.actor.name, occurredAt: settled.occurredAt.toISOString() } : null,
     };
   });
 

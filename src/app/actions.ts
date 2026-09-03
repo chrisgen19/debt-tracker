@@ -73,16 +73,19 @@ export async function setDebtStatus(id: string, status: "DEBT" | "PAID"): Promis
     const user = await actor();
     const debt = await prisma.debt.findFirst({ where: { id, householdId: user.householdId! }, select: { amount: true } });
     if (!debt) return { ok: false, error: "Debt not found" };
-    const occurredAt = new Date();
     // The status guard lives in the UPDATE rather than in a preceding read: two
     // requests racing on the same entry would otherwise both see the old status
     // and each append an event for what is really one transition.
     const applied = await prisma.$transaction(async (tx) => {
       const { count } = await tx.debt.updateMany({
         where: { id, householdId: user.householdId!, status: { not: status } },
-        data: { status, paidAt: status === "PAID" ? occurredAt : null },
+        data: { status },
       });
       if (count === 0) return false;
+      // Stamped only once the row lock is held, so a request that stalled before
+      // the transaction cannot write a timestamp older than one already committed.
+      const occurredAt = new Date();
+      await tx.debt.update({ where: { id }, data: { paidAt: status === "PAID" ? occurredAt : null } });
       await tx.paymentEvent.create({
         data: {
           type: status === "PAID" ? "PAID" : "UNPAID", amount: debt.amount, occurredAt,

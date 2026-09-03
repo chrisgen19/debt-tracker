@@ -28,8 +28,9 @@ type Debt = {
   id: string; itemName: string; amount: number; category: string; paymentMethod: "CASH" | "CREDIT_CARD";
   notes: string | null; incurredAt: string; status: "DEBT" | "PAID"; paidAt: string | null;
   lender: Pick<Member, "id" | "name">; borrower: Pick<Member, "id" | "name">;
-  /** Present only on entries loaded for a paid view. */
-  paidBy?: { name: string; occurredAt: string } | null;
+  /** Who recorded the settle, on entries loaded for a paid view. Not necessarily
+   *  who handed over the money, and unknown for entries settled before the log existed. */
+  markedBy?: { name: string; occurredAt: string } | null;
 };
 type Props = {
   currentUser: Member;
@@ -296,7 +297,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
             ))}
           </div>
         ) : (
-          <EmptyLedger mode={mode} month={month} hasEntries={entries.length > 0} onAdd={onAdd} canAdd={canAdd} />
+          <EmptyLedger mode={mode} month={month} hasEntries={entries.length > 0} capped={mode === "PAID_ALL" && paidTotal > paidLimit} limit={paidLimit} onAdd={onAdd} canAdd={canAdd} />
         )}
       </CardContent>
     </Card>
@@ -330,7 +331,7 @@ function DebtRow({ debt, settled, currentUser, currency, pending, run }: { debt:
   const meta = settled
     ? `incurred ${format(new Date(debt.incurredAt), "MMM d")}`
     : format(new Date(debt.incurredAt), "h:mm a");
-  return <div className="group flex items-center gap-3 rounded-2xl border border-transparent bg-secondary/45 p-3 transition hover:border-border hover:bg-card sm:gap-4 sm:p-4"><div className={`grid size-11 shrink-0 place-items-center rounded-2xl ${debt.paymentMethod === "CREDIT_CARD" ? "bg-[#e7e2f4] text-[#65548d]" : "bg-[#e1ebda] text-primary"}`}>{debt.paymentMethod === "CREDIT_CARD" ? <CreditCard className="size-5" /> : <Banknote className="size-5" />}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate font-semibold">{debt.itemName}</p><Badge className={debt.status === "PAID" ? "bg-[#dcebdc] text-primary" : "bg-[#f8e4da] text-[#9e4f37]"}>{debt.status === "PAID" ? "Paid" : "Debt"}</Badge></div><p className="mt-1 truncate text-xs text-muted-foreground">{debt.category} · {debt.paymentMethod === "CREDIT_CARD" ? "Credit card" : "Cash"} · {meta}</p>{settled && debt.paidBy && <p className="mt-1 truncate text-xs font-medium text-primary">Paid by {debt.paidBy.name.split(" ")[0]}</p>}{debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}</div><div className="text-right"><p className={`font-display text-base font-bold sm:text-lg ${youBorrowed ? "text-[#a6533b]" : "text-primary"}`}>{youBorrowed ? "−" : "+"}{formatMoney(debt.amount, currency)}</p><p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">{debt.borrower.name.split(" ")[0]} owes {debt.lender.name.split(" ")[0]}</p></div><div className="flex shrink-0 gap-1"><button disabled={pending} aria-label={debt.status === "DEBT" ? "Mark paid" : "Mark unpaid"} onClick={() => run(() => setDebtStatus(debt.id, debt.status === "DEBT" ? "PAID" : "DEBT"))} className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"><Check className="size-4" /></button><button disabled={pending} aria-label="Delete entry" onClick={() => { if (window.confirm(`Delete “${debt.itemName}”?`)) run(() => deleteDebt(debt.id)); }} className="hidden size-9 place-items-center rounded-xl text-muted-foreground hover:bg-red-50 hover:text-red-600 sm:grid"><Trash2 className="size-4" /></button></div></div>;
+  return <div className="group flex items-center gap-3 rounded-2xl border border-transparent bg-secondary/45 p-3 transition hover:border-border hover:bg-card sm:gap-4 sm:p-4"><div className={`grid size-11 shrink-0 place-items-center rounded-2xl ${debt.paymentMethod === "CREDIT_CARD" ? "bg-[#e7e2f4] text-[#65548d]" : "bg-[#e1ebda] text-primary"}`}>{debt.paymentMethod === "CREDIT_CARD" ? <CreditCard className="size-5" /> : <Banknote className="size-5" />}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate font-semibold">{debt.itemName}</p><Badge className={debt.status === "PAID" ? "bg-[#dcebdc] text-primary" : "bg-[#f8e4da] text-[#9e4f37]"}>{debt.status === "PAID" ? "Paid" : "Debt"}</Badge></div><p className="mt-1 truncate text-xs text-muted-foreground">{debt.category} · {debt.paymentMethod === "CREDIT_CARD" ? "Credit card" : "Cash"} · {meta}</p>{settled && debt.markedBy && <p className="mt-1 truncate text-xs font-medium text-primary">Marked by {debt.markedBy.name.split(" ")[0]}</p>}{debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}</div><div className="text-right"><p className={`font-display text-base font-bold sm:text-lg ${youBorrowed ? "text-[#a6533b]" : "text-primary"}`}>{youBorrowed ? "−" : "+"}{formatMoney(debt.amount, currency)}</p><p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">{debt.borrower.name.split(" ")[0]} owes {debt.lender.name.split(" ")[0]}</p></div><div className="flex shrink-0 gap-1"><button disabled={pending} aria-label={debt.status === "DEBT" ? "Mark paid" : "Mark unpaid"} onClick={() => run(() => setDebtStatus(debt.id, debt.status === "DEBT" ? "PAID" : "DEBT"))} className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"><Check className="size-4" /></button><button disabled={pending} aria-label="Delete entry" onClick={() => { if (window.confirm(`Delete “${debt.itemName}”?`)) run(() => deleteDebt(debt.id)); }} className="hidden size-9 place-items-center rounded-xl text-muted-foreground hover:bg-red-50 hover:text-red-600 sm:grid"><Trash2 className="size-4" /></button></div></div>;
 }
 
 function SettingsPanel({ currentUser, household, members, categories, pending, onClose, run }: { currentUser: Member; household: Props["household"]; members: Member[]; categories: CategoryOption[]; pending: boolean; onClose: () => void; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
@@ -403,7 +404,7 @@ function InviteBanner({ household, pending, onJoin }: { household: Props["househ
   return <div className="mb-7 rounded-3xl border border-[#d8c88e] bg-[#fff8df] p-5 sm:flex sm:items-center sm:justify-between"><div className="flex gap-4"><div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#f5e9c9] text-[#80621f]"><UserPlus className="size-5" /></div><div><p className="font-bold">Connect with your partner</p><p className="mt-1 text-sm leading-6 text-[#796d4d]">Share code <strong className="font-mono tracking-widest">{household.inviteCode}</strong>, or join the household they created.</p></div></div><div className="mt-4 sm:mt-0">{joining ? <div className="flex gap-2"><Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="INVITE CODE" className="w-36 bg-white uppercase"/><Button disabled={pending || !code} onClick={() => onJoin(code)}>Join</Button></div> : <Button variant="outline" onClick={() => setJoining(true)} className="bg-white">I have their code</Button>}</div></div>;
 }
 
-function EmptyLedger({ mode, month, hasEntries, onAdd, canAdd }: { mode: LedgerMode; month: Props["month"]; hasEntries: boolean; onAdd: () => void; canAdd: boolean }) {
+function EmptyLedger({ mode, month, hasEntries, capped, limit, onAdd, canAdd }: { mode: LedgerMode; month: Props["month"]; hasEntries: boolean; capped: boolean; limit: number; onAdd: () => void; canAdd: boolean }) {
   const filteredEmpty = hasEntries;
   const settled = isPaidMode(mode);
   const emptyCopy = {
@@ -413,7 +414,11 @@ function EmptyLedger({ mode, month, hasEntries, onAdd, canAdd }: { mode: LedgerM
     PAID_ALL: { title: "No payment history yet", description: "Once you mark entries as paid, every settled payment is logged here." },
   }[mode];
   const title = filteredEmpty ? "No entries match those filters" : emptyCopy.title;
-  const description = filteredEmpty ? "Try another direction or search term." : emptyCopy.description;
+  const description = filteredEmpty
+    ? capped
+      ? `Only the ${limit} most recent payments are searched here. An older payment may exist outside that range.`
+      : "Try another direction or search term."
+    : emptyCopy.description;
   return <div className="grid place-items-center py-14 text-center"><div className="mb-4 grid size-14 place-items-center rounded-2xl bg-secondary text-primary">{(mode === "OPEN" || settled) && !filteredEmpty ? <CheckCircle2 className="size-6" /> : <ReceiptText className="size-6" />}</div><h3 className="font-display text-lg font-semibold">{title}</h3><p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">{description}</p>{mode === "MONTH" && !filteredEmpty && canAdd && <Button onClick={onAdd} className="mt-5"><Plus className="size-4" />Add first entry</Button>}</div>;
 }
 function Field({ label, optional, children }: { label: string; optional?: boolean; children: React.ReactNode }) { return <label className="block text-sm font-semibold">{label}{optional && <span className="ml-1 font-normal text-muted-foreground">(optional)</span>}<div className="mt-2">{children}</div></label>; }

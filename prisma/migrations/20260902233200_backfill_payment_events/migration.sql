@@ -1,6 +1,7 @@
 -- Seed the payment log from debts that were already settled before the log existed.
--- `createdById` is the best available actor for historical rows, and the id only
--- needs to be unique, so a uuid stands in for the cuid the app would generate.
+-- These rows get a NULL actor: nothing recorded who marked them paid, and the
+-- entry's creator is a guess, not evidence. The id only needs to be unique, so a
+-- uuid stands in for the cuid the app would generate.
 INSERT INTO "PaymentEvent" (id, type, amount, "occurredAt", "createdAt", "debtId", "householdId", "actorId")
 SELECT
     gen_random_uuid()::text,
@@ -10,6 +11,6 @@ SELECT
     now(),
     d.id,
     d."householdId",
-    d."createdById"
+    NULL
 FROM "Debt" d
 WHERE d.status = 'PAID' AND d."paidAt" IS NOT NULL;

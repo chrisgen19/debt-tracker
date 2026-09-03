@@ -10,7 +10,7 @@ CREATE TABLE "PaymentEvent" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "debtId" TEXT NOT NULL,
     "householdId" TEXT NOT NULL,
-    "actorId" TEXT NOT NULL,
+    "actorId" TEXT,
 
     CONSTRAINT "PaymentEvent_pkey" PRIMARY KEY ("id")
 );

@@ -149,8 +149,10 @@ model PaymentEvent {
   debt        Debt      @relation(fields: [debtId], references: [id], onDelete: Cascade)
   householdId String
   household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  actorId     String
-  actor       User      @relation("PaymentActor", fields: [actorId], references: [id], onDelete: Restrict)
+  /// Who recorded the transition. Null for rows seeded by the backfill, where
+  /// the person who marked the entry paid was never captured.
+  actorId     String?
+  actor       User?     @relation("PaymentActor", fields: [actorId], references: [id], onDelete: Restrict)
 
   @@index([householdId, occurredAt])
   @@index([debtId, occurredAt])
