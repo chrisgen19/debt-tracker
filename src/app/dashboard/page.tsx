@@ -145,6 +145,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
       month={{ key: format(start, "yyyy-MM"), label: format(start, "MMMM yyyy"), previous: format(addMonths(start, -1), "yyyy-MM"), next: format(addMonths(start, 1), "yyyy-MM") }}
       summary={{ youOwe, owedToYou, paidByYou: Number(paidByMe._sum.amount ?? 0), paidToYou: Number(paidToMe._sum.amount ?? 0), allTimeYouOwe, allTimeOwedToYou, allTimePaidByYou, allTimePaidToYou }}
       chart={days}
+      openEntryOnLoad={query.new === "1"}
     />
   );
 }

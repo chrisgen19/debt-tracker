@@ -10,7 +10,7 @@ export default async function LoginPage() {
   return (
     <main className="relative min-h-svh overflow-hidden bg-[#eef4ed]">
       <div className="absolute -left-32 top-1/3 size-96 rounded-full bg-[#d7e7d5] blur-3xl" /><div className="absolute -right-32 -top-32 size-[32rem] rounded-full bg-[#f7e8c6] blur-3xl" />
-      <div className="relative mx-auto grid min-h-svh max-w-7xl items-center gap-12 px-5 py-10 lg:grid-cols-[1.1fr_.9fr] lg:px-10">
+      <div className="relative mx-auto grid min-h-svh max-w-7xl items-center gap-12 px-5 pb-[calc(env(safe-area-inset-bottom)+2.5rem)] pt-[calc(env(safe-area-inset-top)+2.5rem)] lg:grid-cols-[1.1fr_.9fr] lg:px-10">
         <section className="hidden max-w-xl lg:block">
           <div className="mb-14 flex items-center gap-3"><div className="grid size-11 place-items-center rounded-2xl bg-primary text-primary-foreground"><ArrowDownRight className="size-5" /></div><span className="font-display text-xl font-bold tracking-tight">Owewell</span></div>
           <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-primary/10 bg-white/65 px-3.5 py-2 text-xs font-bold text-primary"><Sparkles className="size-3.5" /> Money between two people, made simple</div>
