@@ -183,11 +183,12 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
     return [...groups.entries()];
   }, [filtered, settled]);
 
-  const tabs: { mode: LedgerMode; label: string; badge?: number }[] = [
-    { mode: "MONTH", label: "This month" },
-    { mode: "OPEN", label: "All unpaid", badge: openDebtCount },
-    { mode: "PAID_MONTH", label: "Paid this month" },
-    { mode: "PAID_ALL", label: "All paid" },
+  type LedgerPrimaryView = "ACTIVITY" | "UNPAID" | "PAYMENTS";
+  const primaryView: LedgerPrimaryView = mode === "MONTH" ? "ACTIVITY" : mode === "OPEN" ? "UNPAID" : "PAYMENTS";
+  const primaryViews: { view: LedgerPrimaryView; mode: LedgerMode; label: string; badge?: number }[] = [
+    { view: "ACTIVITY", mode: "MONTH", label: "Activity" },
+    { view: "UNPAID", mode: "OPEN", label: "Unpaid", badge: openDebtCount },
+    { view: "PAYMENTS", mode: settled ? mode : "PAID_MONTH", label: "Payments" },
   ];
 
   const directionOptions: { value: DirectionFilter; label: string }[] = [
@@ -198,12 +199,13 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
 
   const entryCount = (count: number) => `${count} ${count === 1 ? "entry" : "entries"}`;
   const paymentCount = (count: number) => `${count} ${count === 1 ? "payment" : "payments"}`;
+  const shortMonthLabel = format(new Date(`${month.key}-01T12:00:00`), "MMM yyyy");
   const heading = {
-    MONTH: { title: "Monthly ledger", subtitle: `${entryCount(monthlyDebts.length)} recorded in ${month.label}` },
-    OPEN: { title: "All unpaid", subtitle: `${entryCount(openDebtCount)} still open across all months` },
-    PAID_MONTH: { title: "Paid this month", subtitle: `${paymentCount(paidTotal)} settled in ${month.label}` },
+    MONTH: { title: `${month.label} activity`, subtitle: `${entryCount(monthlyDebts.length)} recorded during the selected month` },
+    OPEN: { title: "Outstanding entries", subtitle: `${entryCount(openDebtCount)} still open across all months` },
+    PAID_MONTH: { title: "Payment history", subtitle: `${paymentCount(paidTotal)} settled in ${month.label}` },
     PAID_ALL: {
-      title: "All paid",
+      title: "Payment history",
       subtitle: paidTotal > paidLimit
         ? `${paymentCount(paidTotal)} settled in total, showing the ${paidLimit} most recent`
         : `${paymentCount(paidTotal)} settled across all months`,
@@ -218,48 +220,82 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
             <CardTitle>{heading.title}</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">{heading.subtitle}</p>
           </div>
-          <div role="group" aria-label="Ledger view" className="grid grid-cols-2 gap-1 rounded-xl bg-secondary/80 p-1 sm:grid-cols-4">
-            {tabs.map((tab) => (
+          <div role="group" aria-label="Ledger view" className="grid w-full shrink-0 grid-cols-3 border-b border-border lg:w-[28rem]">
+            {primaryViews.map((view) => (
               <button
-                key={tab.mode}
+                key={view.view}
                 type="button"
-                aria-pressed={mode === tab.mode}
-                onClick={() => onModeChange(tab.mode)}
-                className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-bold transition sm:px-3 ${mode === tab.mode ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                aria-pressed={primaryView === view.view}
+                onClick={() => onModeChange(view.mode)}
+                className={`-mb-px flex min-h-12 items-center justify-center gap-1.5 border-b-2 px-2 py-3 text-sm font-bold transition focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 ${primaryView === view.view ? "border-primary bg-primary/[.045] text-primary" : "border-transparent text-muted-foreground hover:border-border hover:bg-secondary/45 hover:text-foreground"}`}
               >
-                {tab.label}
-                {tab.badge !== undefined && <span className="rounded-full bg-[#f8e4da] px-1.5 py-0.5 text-[10px] text-[#9e4f37]">{tab.badge}</span>}
+                {view.label}
+                {view.badge !== undefined && <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-[#f8e4da] px-1.5 py-0.5 text-[10px] leading-4 text-[#9e4f37]">{view.badge}</span>}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {mode === "MONTH" ? (
-            <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} aria-label="Entry status" className="h-10 rounded-xl border border-input bg-background px-3 text-sm font-semibold outline-none">
-              <option value="ALL">All statuses</option>
-              <option value="DEBT">Debt</option>
-              <option value="PAID">Paid</option>
-            </select>
-          ) : (
-            <div role="group" aria-label={settled ? "Payment direction" : "Unpaid direction"} className="flex flex-wrap gap-1.5">
-              {directionOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={direction === option.value}
-                  onClick={() => setDirection(option.value)}
-                  className={`rounded-full border px-3 py-2 text-xs font-bold transition ${direction === option.value ? "border-primary/30 bg-[#eef4ed] text-primary" : "border-border bg-background text-muted-foreground hover:bg-secondary/60"}`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="relative min-w-0 flex-1 sm:max-w-72">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={settled ? "Search payments" : mode === "OPEN" ? "Search unpaid entries" : "Search entries"} className="pl-9" />
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className={`grid min-w-0 gap-3 ${settled ? "sm:grid-cols-2" : ""}`}>
+            {settled && (
+              <fieldset className="min-w-0">
+                <legend className="mb-1.5 text-[11px] font-bold uppercase tracking-[.12em] text-muted-foreground">Period</legend>
+                <div role="group" aria-label="Payment period" className="grid min-h-11 grid-cols-2 gap-1 rounded-xl border border-border bg-secondary/60 p-1">
+                  {([
+                    { mode: "PAID_MONTH" as const, label: shortMonthLabel },
+                    { mode: "PAID_ALL" as const, label: "All time" },
+                  ]).map((option) => (
+                    <button
+                      key={option.mode}
+                      type="button"
+                      aria-pressed={mode === option.mode}
+                      onClick={() => onModeChange(option.mode)}
+                      className={`rounded-lg px-3 py-2 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${mode === option.mode ? "bg-card text-foreground shadow-sm ring-1 ring-border/50" : "text-muted-foreground hover:bg-card/60 hover:text-foreground"}`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+
+            {mode === "MONTH" ? (
+              <label className="block min-w-0">
+                <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[.12em] text-muted-foreground">Status</span>
+                <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm font-semibold outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/10 sm:w-auto">
+                  <option value="ALL">All statuses</option>
+                  <option value="DEBT">Debt</option>
+                  <option value="PAID">Paid</option>
+                </select>
+              </label>
+            ) : (
+              <fieldset className="min-w-0">
+                <legend className="mb-1.5 text-[11px] font-bold uppercase tracking-[.12em] text-muted-foreground">Direction</legend>
+                <div role="group" aria-label={settled ? "Payment direction" : "Unpaid direction"} className="flex min-h-11 flex-wrap gap-1.5">
+                  {directionOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={direction === option.value}
+                      onClick={() => setDirection(option.value)}
+                      className={`min-h-11 rounded-full border px-3 py-2 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1 ${direction === option.value ? "border-primary/30 bg-[#eef4ed] text-primary" : "border-border bg-background text-muted-foreground hover:bg-secondary/60"}`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+            )}
           </div>
+
+          <label className="block min-w-0 flex-1 lg:max-w-72">
+            <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[.12em] text-muted-foreground">Search</span>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={settled ? "Search payments" : mode === "OPEN" ? "Search unpaid entries" : "Search entries"} className="pl-9" />
+            </div>
+          </label>
         </div>
       </CardHeader>
 
