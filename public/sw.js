@@ -63,12 +63,21 @@ self.addEventListener("message", (event) => {
     self.skipWaiting();
     return;
   }
-  // Sent on sign-out. By design the caches hold nothing private, but dropping
-  // them costs one rebuild of public build assets and removes all doubt.
+  // Sent on sign-out. By design no cache holds anything private, but dropping the
+  // app code costs one refetch and removes all doubt.
+  //
+  // The shell cache deliberately survives: it holds only the public offline page,
+  // the manifest and the icons. Deleting it would strand the offline fallback,
+  // because this worker stays activated and its install handler never runs again,
+  // so nothing would repopulate /offline until a new version deployed.
   if (type === "CLEAR_CACHES") {
     event.waitUntil(
       caches.keys().then((keys) =>
-        Promise.all(keys.filter((key) => key.startsWith("owewell-")).map((key) => caches.delete(key))),
+        Promise.all(
+          keys
+            .filter((key) => key.startsWith("owewell-") && key !== SHELL_CACHE)
+            .map((key) => caches.delete(key)),
+        ),
       ),
     );
   }

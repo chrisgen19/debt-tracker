@@ -382,13 +382,32 @@ describe("service worker lifecycle", () => {
     assert.deepEqual([...sw.cacheStorage.keys()], ["unrelated-cache"]);
   });
 
-  it("drops every cache it owns when the page signs out", async () => {
+  it("drops cached app code on sign-out but keeps the public offline shell", async () => {
     const sw = createHarness();
     sw.setFetch(async () => new Response("asset"));
     await sw.install();
-    assert.ok(cachedUrls(sw).length > 0);
+    await sw.handle(request("/_next/static/chunks/main-abc123.js"))!;
+    await sw.settle();
 
     await sw.message("CLEAR_CACHES");
-    assert.deepEqual([...sw.cacheStorage.keys()], []);
+
+    // The shell is public by construction, and this worker's install handler will
+    // not run again, so dropping it would strand the offline fallback for good.
+    assert.deepEqual([...sw.cacheStorage.keys()], ["owewell-shell-v1"]);
+  });
+
+  it("still serves the offline page after a sign-out", async () => {
+    const sw = createHarness();
+    sw.setFetch(async () => new Response("offline shell"));
+    await sw.install();
+    await sw.message("CLEAR_CACHES");
+
+    sw.setFetch(async () => {
+      throw new TypeError("network error");
+    });
+    const response = await sw.handle(request("/dashboard", { mode: "navigate" }))!;
+
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), "offline shell");
   });
 });
