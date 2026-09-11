@@ -8,6 +8,11 @@ import { Button } from "@/components/ui/button";
 /**
  * Floating action bar for the ledger's selection mode. It sits above the mobile
  * bottom nav, which owns `bottom-0` up to the `md` breakpoint.
+ *
+ * Sticky rather than fixed: a fixed bar is outside the flow, so it covered the
+ * last rows of the ledger with no way to scroll them clear. Sticky reserves its
+ * own height in the flow, so the list can always be scrolled past it, whatever
+ * the bar grows to at that width.
  */
 export function SelectionBar({ selection, currency, pending, allSelected, onSelectAll, onMarkPaid, onMarkUnpaid, onDelete, onClear }: {
   selection: SelectionSummary;
@@ -25,7 +30,7 @@ export function SelectionBar({ selection, currency, pending, allSelected, onSele
     <div
       role="region"
       aria-label="Selected entries"
-      className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] z-40 px-4 md:bottom-6"
+      className="sticky bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] z-40 mt-4 md:bottom-6"
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-3 rounded-2xl border border-border bg-card/97 p-3 shadow-[0_16px_40px_rgba(0,0,0,.16)] backdrop-blur sm:flex-row sm:items-center sm:gap-4 sm:p-4">
         <div className="min-w-0 flex-1">

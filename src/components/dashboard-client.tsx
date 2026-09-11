@@ -290,6 +290,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
   }[mode];
 
   return (
+    <>
     <Card id="ledger" className="scroll-mt-24 overflow-hidden">
       <CardHeader className="gap-5 border-b border-border/70">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
@@ -426,8 +427,10 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
           <EmptyLedger mode={mode} month={month} hasEntries={entries.length > 0} capped={mode === "PAID_ALL" && paidTotal > paidLimit} limit={paidLimit} onAdd={onAdd} canAdd={canAdd} />
         )}
       </CardContent>
+    </Card>
 
-      <SelectionBar
+    {/* Outside the Card because it sticks, and the Card clips overflow. */}
+    <SelectionBar
         selection={selection}
         currency={currency}
         pending={pending}
@@ -442,7 +445,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
         }}
         onClear={clearSelection}
       />
-    </Card>
+    </>
   );
 }
 
