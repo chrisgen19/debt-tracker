@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
@@ -11,9 +11,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
-import { createDebt, deleteDebt, joinHousehold, setDebtStatus, updateCategoryConfig, updateHousehold } from "@/app/actions";
+import { createDebt, deleteDebt, deleteDebts, joinHousehold, setDebtStatus, setDebtStatusBulk, updateCategoryConfig, updateHousehold } from "@/app/actions";
 import { filterLedgerEntries, isPaidMode, type DirectionFilter, type LedgerMode, type LedgerStatusFilter } from "@/lib/ledger";
 import { clearInstalledAppState } from "@/lib/pwa";
+import { setSelectionFor, summarizeSelection } from "@/lib/selection";
 import { formatMoney, initials } from "@/lib/utils";
 import type { CategoryOption } from "@/lib/categories";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { EntryModal } from "@/components/entry-modal";
 import { CategorySettings } from "@/components/category-settings";
 import { SummaryCarousel } from "@/components/summary-carousel";
+import { SelectionBar } from "@/components/selection-bar";
 import { AppBadge } from "@/components/app-badge";
 
 type Member = { id: string; name: string; email: string };
@@ -58,6 +60,9 @@ const noSubscribe = () => () => {};
 const canUseWebShare = () => typeof navigator.share === "function";
 
 const LEDGER_SLUGS: Record<LedgerMode, string> = { MONTH: "", OPEN: "open", PAID_MONTH: "paid", PAID_ALL: "paid-all" };
+
+/** Shared empty selection, so an untouched ledger never allocates a Set per render. */
+const NO_SELECTION: ReadonlySet<string> = new Set();
 
 function ledgerUrl(mode: LedgerMode, monthKey: string) {
   const slug = LEDGER_SLUGS[mode];
@@ -188,12 +193,61 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<LedgerStatusFilter>("ALL");
   const [direction, setDirection] = useState<DirectionFilter>("ALL");
+  // A selection survives search and filter changes so you can search, select,
+  // search again and keep building one set. Switching view or month starts over,
+  // and tagging the state with the view it belongs to expresses that during
+  // render - an effect would clear it a render late and cascade.
+  const viewKey = `${mode}:${month.key}`;
+  const [selectedState, setSelectedState] = useState<{ view: string; ids: ReadonlySet<string> }>({ view: viewKey, ids: NO_SELECTION });
+  // Discard on the way out, not just hide. Keeping the old ids parked in state
+  // meant coming back to the view they belonged to re-armed the bar with them,
+  // long after it had disappeared and the selection looked abandoned.
+  if (selectedState.view !== viewKey) setSelectedState({ view: viewKey, ids: NO_SELECTION });
+  // Still needed for the render that schedules that reset, which React discards.
+  const selected = selectedState.view === viewKey ? selectedState.ids : NO_SELECTION;
   const settled = isPaidMode(mode);
   const entries = settled ? paidDebts : mode === "OPEN" ? openDebts : monthlyDebts;
 
   const filtered = useMemo(() => filterLedgerEntries(entries, {
     mode, status, direction, currentUserId: currentUser.id, search,
   }), [currentUser.id, direction, entries, mode, search, status]);
+
+  const updateSelected = useCallback((next: (current: ReadonlySet<string>) => ReadonlySet<string>) => {
+    setSelectedState((state) => ({ view: viewKey, ids: next(state.view === viewKey ? state.ids : NO_SELECTION) }));
+  }, [viewKey]);
+  const clearSelection = useCallback(() => updateSelected(() => NO_SELECTION), [updateSelected]);
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) { if (event.key === "Escape") clearSelection(); }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [clearSelection]);
+
+  const selection = useMemo(
+    () => summarizeSelection(entries, selected, new Set(filtered.map((debt) => debt.id)), currentUser.id),
+    [currentUser.id, entries, filtered, selected],
+  );
+  const selecting = selection.count > 0;
+  const allSelected = filtered.length > 0 && filtered.every((debt) => selected.has(debt.id));
+
+  function toggleSelected(id: string) {
+    updateSelected((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+  function toggleSelectAll() {
+    const visibleIds = filtered.map((debt) => debt.id);
+    updateSelected((current) => setSelectionFor(current, visibleIds, !allSelected));
+  }
+  /** Clears the selection once the bulk action lands, so the bar does not linger over stale ids. */
+  function runBulk(action: () => Promise<{ ok: boolean; message?: string; error?: string }>) {
+    run(async () => {
+      const result = await action();
+      if (result.ok) clearSelection();
+      return result;
+    });
+  }
 
   // Paid views group by the day money actually changed hands, not the day the item was bought.
   const grouped = useMemo(() => {
@@ -236,6 +290,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
   }[mode];
 
   return (
+    <>
     <Card id="ledger" className="scroll-mt-24 overflow-hidden">
       <CardHeader className="gap-5 border-b border-border/70">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
@@ -350,7 +405,20 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
                   <div className="h-px flex-1 bg-border" />
                 </div>
                 <div className="space-y-2">
-                  {dateEntries.map((debt) => <DebtRow key={debt.id} debt={debt} settled={settled} currentUser={currentUser} currency={currency} pending={pending} run={run} />)}
+                  {dateEntries.map((debt) => (
+                    <DebtRow
+                      key={debt.id}
+                      debt={debt}
+                      settled={settled}
+                      currentUser={currentUser}
+                      currency={currency}
+                      pending={pending}
+                      selecting={selecting}
+                      isSelected={selected.has(debt.id)}
+                      onToggleSelected={toggleSelected}
+                      run={run}
+                    />
+                  ))}
                 </div>
               </div>
             ))}
@@ -360,6 +428,25 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
         )}
       </CardContent>
     </Card>
+
+    {/* Outside the Card because it sticks, and the Card clips overflow. */}
+    <SelectionBar
+        selection={selection}
+        currency={currency}
+        settled={settled}
+        pending={pending}
+        allSelected={allSelected}
+        onSelectAll={toggleSelectAll}
+        onMarkPaid={() => runBulk(() => setDebtStatusBulk(selection.toPay, "PAID"))}
+        onMarkUnpaid={() => runBulk(() => setDebtStatusBulk(selection.toUnpay, "DEBT"))}
+        onDelete={() => {
+          if (window.confirm(`Delete ${selection.count === 1 ? "this entry" : `these ${selection.count} entries`}? This cannot be undone.`)) {
+            runBulk(() => deleteDebts(selection.ids));
+          }
+        }}
+        onClear={clearSelection}
+      />
+    </>
   );
 }
 
@@ -387,14 +474,87 @@ function BalanceCard({ className, currentUser, partner, summary, currency }: { c
   return <Card className={`relative overflow-hidden bg-[#244b37] text-white ${className ?? ""}`}><div className="absolute -right-16 -top-16 size-52 rounded-full border-[36px] border-white/5"/><CardHeader className="relative"><p className="text-xs font-bold uppercase tracking-[.18em] text-white/60">All-time balance</p><CardTitle className="text-white">Between you two</CardTitle></CardHeader><CardContent className="relative"><div className="mb-6 flex items-center"><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#dcebdc] font-bold text-primary">{initials(currentUser.name)}</div><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><HandCoins className="size-5 text-[#f2d68d]"/><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#f4dfd5] font-bold text-[#9e4f37]">{partner ? initials(partner.name) : "?"}</div></div><p className="text-sm text-white/65">{!partner ? "Invite your partner to calculate your balance." : net > 0 ? `${partner.name.split(" ")[0]} owes you` : net < 0 ? `You owe ${partner.name.split(" ")[0]}` : "You’re perfectly even"}</p><p className="mt-1 font-display text-4xl font-semibold">{formatMoney(Math.abs(net), currency)}</p><div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-[#f2d68d]" style={{ width: `${Math.min(100, Math.max(8, Math.abs(net) / Math.max(summary.allTimeOwedToYou + summary.allTimeYouOwe, 1) * 100))}%` }} /></div></CardContent></Card>;
 }
 
-function DebtRow({ debt, settled, currentUser, currency, pending, run }: { debt: Debt; settled: boolean; currentUser: Member; currency: string; pending: boolean; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
+function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isSelected, onToggleSelected, run }: {
+  debt: Debt;
+  settled: boolean;
+  currentUser: Member;
+  currency: string;
+  pending: boolean;
+  selecting: boolean;
+  isSelected: boolean;
+  onToggleSelected: (id: string) => void;
+  run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void;
+}) {
   const youBorrowed = debt.borrower.id === currentUser.id;
   // In a settled view the group header already carries the payment date, so the
   // row shows when the expense was incurred instead.
   const meta = settled
     ? `incurred ${format(new Date(debt.incurredAt), "MMM d")}`
     : format(new Date(debt.incurredAt), "h:mm a");
-  return <div className="group flex items-center gap-3 rounded-2xl border border-transparent bg-secondary/45 p-3 transition hover:border-border hover:bg-card sm:gap-4 sm:p-4"><div className={`grid size-11 shrink-0 place-items-center rounded-2xl ${debt.paymentMethod === "CREDIT_CARD" ? "bg-[#e7e2f4] text-[#65548d]" : "bg-[#e1ebda] text-primary"}`}>{debt.paymentMethod === "CREDIT_CARD" ? <CreditCard className="size-5" /> : <Banknote className="size-5" />}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate font-semibold">{debt.itemName}</p><Badge className={debt.status === "PAID" ? "bg-[#dcebdc] text-primary" : "bg-[#f8e4da] text-[#9e4f37]"}>{debt.status === "PAID" ? "Paid" : "Debt"}</Badge></div><p className="mt-1 truncate text-xs text-muted-foreground">{debt.category} · {debt.paymentMethod === "CREDIT_CARD" ? "Credit card" : "Cash"} · {meta}</p>{settled && debt.markedBy && <p className="mt-1 truncate text-xs font-medium text-primary">Marked by {debt.markedBy.name.split(" ")[0]}</p>}{debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}</div><div className="text-right"><p className={`font-display text-base font-bold sm:text-lg ${youBorrowed ? "text-[#a6533b]" : "text-primary"}`}>{youBorrowed ? "−" : "+"}{formatMoney(debt.amount, currency)}</p><p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">{debt.borrower.name.split(" ")[0]} owes {debt.lender.name.split(" ")[0]}</p></div><div className="flex shrink-0 gap-1"><button disabled={pending} aria-label={debt.status === "DEBT" ? "Mark paid" : "Mark unpaid"} onClick={() => run(() => setDebtStatus(debt.id, debt.status === "DEBT" ? "PAID" : "DEBT"))} className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"><Check className="size-4" /></button><button disabled={pending} aria-label="Delete entry" onClick={() => { if (window.confirm(`Delete “${debt.itemName}”?`)) run(() => deleteDebt(debt.id)); }} className="hidden size-9 place-items-center rounded-xl text-muted-foreground hover:bg-red-50 hover:text-red-600 sm:grid"><Trash2 className="size-4" /></button></div></div>;
+  const MethodIcon = debt.paymentMethod === "CREDIT_CARD" ? CreditCard : Banknote;
+
+  // The checkbox in the icon slot is the keyboard-operable control; the row-wide
+  // click is a pointer convenience on top of it, which is why the row itself is
+  // not a button - that would nest the per-row actions inside another button.
+  return (
+    <div
+      // Frozen while an action is in flight, like the buttons: a row selected
+      // mid-request was never in the submitted payload, yet the selection is
+      // cleared wholesale on success, so it would vanish without being acted on.
+      onClick={() => { if (!pending) onToggleSelected(debt.id); }}
+      className={`group flex items-center gap-3 rounded-2xl border p-3 transition sm:gap-4 sm:p-4 ${pending ? "cursor-default" : "cursor-pointer"} ${isSelected ? "border-primary/40 bg-[#eef4ed]" : "border-transparent bg-secondary/45 hover:border-border hover:bg-card"}`}
+    >
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={isSelected}
+        aria-label={`Select ${debt.itemName}`}
+        disabled={pending}
+        onClick={(event) => { event.stopPropagation(); onToggleSelected(debt.id); }}
+        className={`grid size-11 shrink-0 place-items-center rounded-2xl transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${isSelected ? "bg-primary text-primary-foreground" : debt.paymentMethod === "CREDIT_CARD" ? "bg-[#e7e2f4] text-[#65548d]" : "bg-[#e1ebda] text-primary"}`}
+      >
+        {isSelected ? <Check className="size-5" /> : <MethodIcon className="size-5" />}
+      </button>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="truncate font-semibold">{debt.itemName}</p>
+          <Badge className={debt.status === "PAID" ? "bg-[#dcebdc] text-primary" : "bg-[#f8e4da] text-[#9e4f37]"}>{debt.status === "PAID" ? "Paid" : "Debt"}</Badge>
+        </div>
+        <p className="mt-1 truncate text-xs text-muted-foreground">{debt.category} · {debt.paymentMethod === "CREDIT_CARD" ? "Credit card" : "Cash"} · {meta}</p>
+        {settled && debt.markedBy && <p className="mt-1 truncate text-xs font-medium text-primary">Marked by {debt.markedBy.name.split(" ")[0]}</p>}
+        {debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}
+      </div>
+
+      <div className="text-right">
+        <p className={`font-display text-base font-bold sm:text-lg ${youBorrowed ? "text-[#a6533b]" : "text-primary"}`}>{youBorrowed ? "−" : "+"}{formatMoney(debt.amount, currency)}</p>
+        <p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">{debt.borrower.name.split(" ")[0]} owes {debt.lender.name.split(" ")[0]}</p>
+      </div>
+
+      {/* While a selection is open the floating bar owns these actions, so the
+          per-row buttons step aside rather than offering a second way to act. */}
+      {!selecting && (
+        <div className="flex shrink-0 gap-1">
+          <button
+            disabled={pending}
+            aria-label={debt.status === "DEBT" ? "Mark paid" : "Mark unpaid"}
+            onClick={(event) => { event.stopPropagation(); run(() => setDebtStatus(debt.id, debt.status === "DEBT" ? "PAID" : "DEBT")); }}
+            className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"
+          >
+            <Check className="size-4" />
+          </button>
+          <button
+            disabled={pending}
+            aria-label="Delete entry"
+            onClick={(event) => { event.stopPropagation(); if (window.confirm(`Delete “${debt.itemName}”?`)) run(() => deleteDebt(debt.id)); }}
+            className="hidden size-9 place-items-center rounded-xl text-muted-foreground hover:bg-red-50 hover:text-red-600 sm:grid"
+          >
+            <Trash2 className="size-4" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SettingsPanel({ currentUser, household, members, categories, pending, onClose, run }: { currentUser: Member; household: Props["household"]; members: Member[]; categories: CategoryOption[]; pending: boolean; onClose: () => void; run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void }) {
