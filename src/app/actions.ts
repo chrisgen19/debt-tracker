@@ -26,6 +26,13 @@ const categoryConfigSchema = z.array(z.object({
   ideas: z.array(z.string().trim().min(1).max(40)).max(12),
 })).min(1).max(20);
 
+/// 200 matches PAID_ALL_LIMIT on the dashboard, the longest list the client can render.
+const debtIdsSchema = z.array(z.string().min(1)).min(1).max(200);
+
+function entryCount(count: number) {
+  return `${count} ${count === 1 ? "entry" : "entries"}`;
+}
+
 async function actor() {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user) throw new Error("You must be signed in");
@@ -109,6 +116,58 @@ export async function deleteDebt(id: string): Promise<ActionResult> {
     revalidatePath("/dashboard");
     return { ok: true, message: "Entry deleted" };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not delete this entry" }; }
+}
+
+export async function setDebtStatusBulk(ids: string[], status: "DEBT" | "PAID"): Promise<ActionResult> {
+  try {
+    const user = await actor();
+    const parsed = debtIdsSchema.safeParse(ids);
+    if (!parsed.success) return { ok: false, error: "Select between 1 and 200 entries" };
+    // Same reasoning as setDebtStatus: the status guard lives in the UPDATE so two
+    // requests racing on the same entry cannot each append an event for what is
+    // really one transition. `updateManyAndReturn` is a single UPDATE ... RETURNING,
+    // so the whole selection settles in a fixed four statements and still reports
+    // exactly which rows moved. The householdId is the authorization guard: ids from
+    // another household match nothing rather than reporting that they exist.
+    const changed = await prisma.$transaction(async (tx) => {
+      const updated = await tx.debt.updateManyAndReturn({
+        where: { id: { in: parsed.data }, householdId: user.householdId!, status: { not: status } },
+        data: { status },
+        select: { id: true, amount: true },
+      });
+      if (!updated.length) return 0;
+      // Stamped only once the row locks are held, so a request that stalled before
+      // the transaction cannot write a timestamp older than one already committed.
+      const occurredAt = new Date();
+      await tx.debt.updateMany({
+        where: { id: { in: updated.map((debt) => debt.id) } },
+        data: { paidAt: status === "PAID" ? occurredAt : null },
+      });
+      await tx.paymentEvent.createMany({
+        data: updated.map((debt) => ({
+          type: status === "PAID" ? ("PAID" as const) : ("UNPAID" as const), amount: debt.amount, occurredAt,
+          debtId: debt.id, householdId: user.householdId!, actorId: user.id,
+        })),
+      });
+      return updated.length;
+    });
+    if (!changed) return { ok: true };
+    revalidatePath("/dashboard");
+    return { ok: true, message: `${entryCount(changed)} marked as ${status === "PAID" ? "paid" : "unpaid"}` };
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update these entries" }; }
+}
+
+export async function deleteDebts(ids: string[]): Promise<ActionResult> {
+  try {
+    const user = await actor();
+    const parsed = debtIdsSchema.safeParse(ids);
+    if (!parsed.success) return { ok: false, error: "Select between 1 and 200 entries" };
+    // The householdId in the filter is what keeps this scoped to your own entries.
+    const { count } = await prisma.debt.deleteMany({ where: { id: { in: parsed.data }, householdId: user.householdId! } });
+    if (!count) return { ok: false, error: "Those entries could not be found" };
+    revalidatePath("/dashboard");
+    return { ok: true, message: `${entryCount(count)} deleted` };
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not delete these entries" }; }
 }
 
 export async function joinHousehold(code: string): Promise<ActionResult> {
