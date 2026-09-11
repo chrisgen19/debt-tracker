@@ -199,6 +199,11 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
   // render - an effect would clear it a render late and cascade.
   const viewKey = `${mode}:${month.key}`;
   const [selectedState, setSelectedState] = useState<{ view: string; ids: ReadonlySet<string> }>({ view: viewKey, ids: NO_SELECTION });
+  // Discard on the way out, not just hide. Keeping the old ids parked in state
+  // meant coming back to the view they belonged to re-armed the bar with them,
+  // long after it had disappeared and the selection looked abandoned.
+  if (selectedState.view !== viewKey) setSelectedState({ view: viewKey, ids: NO_SELECTION });
+  // Still needed for the render that schedules that reset, which React discards.
   const selected = selectedState.view === viewKey ? selectedState.ids : NO_SELECTION;
   const settled = isPaidMode(mode);
   const entries = settled ? paidDebts : mode === "OPEN" ? openDebts : monthlyDebts;
