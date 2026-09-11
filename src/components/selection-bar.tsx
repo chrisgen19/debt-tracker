@@ -26,6 +26,7 @@ export function SelectionBar({ selection, currency, pending, allSelected, onSele
   onClear: () => void;
 }) {
   if (!selection.count) return null;
+  const bothStatuses = selection.toPay.length > 0 && selection.toUnpay.length > 0;
   return (
     <div
       role="region"
@@ -70,10 +71,12 @@ export function SelectionBar({ selection, currency, pending, allSelected, onSele
               <ActionLabel short="Unpaid" full="Mark unpaid" count={selection.toUnpay.length} />
             </Button>
           )}
-          <Button size="sm" variant="destructive" disabled={pending} onClick={onDelete} className="w-full sm:w-auto">
+          {/* With both mark actions filling the first row, Delete would sit alone
+              in half of the second. Let it span instead of leaving a gap. */}
+          <Button size="sm" variant="destructive" disabled={pending} onClick={onDelete} className={`w-full sm:w-auto ${bothStatuses ? "col-span-2" : ""}`}>
             <Trash2 className="size-4" />Delete ({selection.count})
           </Button>
-          <Button size="sm" variant="ghost" aria-label="Cancel selection" disabled={pending} onClick={onClear} className="w-full sm:w-auto sm:px-2">
+          <Button size="sm" variant="ghost" aria-label="Cancel selection" disabled={pending} onClick={onClear} className="col-span-2 w-full sm:w-auto sm:px-2">
             <X className="size-4" />
             <span className="sm:hidden">Cancel</span>
           </Button>
