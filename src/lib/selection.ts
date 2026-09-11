@@ -23,6 +23,18 @@ export type SelectionSummary = {
 };
 
 /**
+ * Adds or removes one group of ids, leaving every other selected id untouched.
+ * The ledger's "Select all" is scoped to the filtered list, so it must not
+ * disturb a selection the current filter happens to be hiding. Clearing the
+ * whole selection is a separate control.
+ */
+export function setSelectionFor(current: ReadonlySet<string>, ids: string[], selected: boolean): ReadonlySet<string> {
+  const next = new Set(current);
+  ids.forEach((id) => { if (selected) next.add(id); else next.delete(id); });
+  return next;
+}
+
+/**
  * Resolves a set of selected ids against the entries actually loaded for the
  * current view. Deriving the summary from the entries rather than from the
  * selection itself means ids can never outlive the rows they came from: when the

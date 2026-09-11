@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { summarizeSelection } from "./selection";
+import { setSelectionFor, summarizeSelection } from "./selection";
 
 const entries = [
   { id: "dinner", amount: 450, status: "DEBT" as const, borrower: { id: "me" }, lender: { id: "partner" } },
@@ -42,5 +42,23 @@ describe("summarizeSelection", () => {
     assert.equal(summary.count, 0);
     assert.equal(summary.total, 0);
     assert.deepEqual(summary.toPay, []);
+  });
+});
+
+describe("setSelectionFor", () => {
+  it("adds the given ids without disturbing a selection a filter is hiding", () => {
+    const next = setSelectionFor(new Set(["hidden"]), ["dinner", "medicine"], true);
+    assert.deepEqual([...next].sort(), ["dinner", "hidden", "medicine"]);
+  });
+
+  it("removes only the given ids, so a filtered clear keeps hidden entries selected", () => {
+    const next = setSelectionFor(new Set(["hidden", "dinner"]), ["dinner"], false);
+    assert.deepEqual([...next], ["hidden"]);
+  });
+
+  it("leaves the original set untouched", () => {
+    const current = new Set(["dinner"]);
+    setSelectionFor(current, ["coffee"], true);
+    assert.deepEqual([...current], ["dinner"]);
   });
 });

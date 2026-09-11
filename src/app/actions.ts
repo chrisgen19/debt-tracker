@@ -26,8 +26,12 @@ const categoryConfigSchema = z.array(z.object({
   ideas: z.array(z.string().trim().min(1).max(40)).max(12),
 })).min(1).max(20);
 
-/// 200 matches PAID_ALL_LIMIT on the dashboard, the longest list the client can render.
-const debtIdsSchema = z.array(z.string().min(1)).min(1).max(200);
+/// Only the all-time paid list is capped on the dashboard; the month, unpaid and
+/// paid-this-month lists are unbounded, and "Select all" on the unpaid view spans
+/// every month. So this is a guard against an abusive payload rather than a mirror
+/// of any UI limit, and it sits far above what a two-person ledger reaches. Even at
+/// this size the three statements below stay well inside Postgres' parameter limit.
+const debtIdsSchema = z.array(z.string().min(1)).min(1).max(2000);
 
 function entryCount(count: number) {
   return `${count} ${count === 1 ? "entry" : "entries"}`;
@@ -122,7 +126,7 @@ export async function setDebtStatusBulk(ids: string[], status: "DEBT" | "PAID"):
   try {
     const user = await actor();
     const parsed = debtIdsSchema.safeParse(ids);
-    if (!parsed.success) return { ok: false, error: "Select between 1 and 200 entries" };
+    if (!parsed.success) return { ok: false, error: "Select between 1 and 2000 entries" };
     // Same reasoning as setDebtStatus: the status guard lives in the UPDATE so two
     // requests racing on the same entry cannot each append an event for what is
     // really one transition. `updateManyAndReturn` is a single UPDATE ... RETURNING,
@@ -161,7 +165,7 @@ export async function deleteDebts(ids: string[]): Promise<ActionResult> {
   try {
     const user = await actor();
     const parsed = debtIdsSchema.safeParse(ids);
-    if (!parsed.success) return { ok: false, error: "Select between 1 and 200 entries" };
+    if (!parsed.success) return { ok: false, error: "Select between 1 and 2000 entries" };
     // The householdId in the filter is what keeps this scoped to your own entries.
     const { count } = await prisma.debt.deleteMany({ where: { id: { in: parsed.data }, householdId: user.householdId! } });
     if (!count) return { ok: false, error: "Those entries could not be found" };

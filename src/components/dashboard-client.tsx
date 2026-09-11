@@ -14,7 +14,7 @@ import { authClient } from "@/lib/auth-client";
 import { createDebt, deleteDebt, deleteDebts, joinHousehold, setDebtStatus, setDebtStatusBulk, updateCategoryConfig, updateHousehold } from "@/app/actions";
 import { filterLedgerEntries, isPaidMode, type DirectionFilter, type LedgerMode, type LedgerStatusFilter } from "@/lib/ledger";
 import { clearInstalledAppState } from "@/lib/pwa";
-import { summarizeSelection } from "@/lib/selection";
+import { setSelectionFor, summarizeSelection } from "@/lib/selection";
 import { formatMoney, initials } from "@/lib/utils";
 import type { CategoryOption } from "@/lib/categories";
 import { Button } from "@/components/ui/button";
@@ -232,7 +232,8 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
     });
   }
   function toggleSelectAll() {
-    updateSelected(() => (allSelected ? NO_SELECTION : new Set(filtered.map((debt) => debt.id))));
+    const visibleIds = filtered.map((debt) => debt.id);
+    updateSelected((current) => setSelectionFor(current, visibleIds, !allSelected));
   }
   /** Clears the selection once the bulk action lands, so the bar does not linger over stale ids. */
   function runBulk(action: () => Promise<{ ok: boolean; message?: string; error?: string }>) {
