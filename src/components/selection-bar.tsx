@@ -14,9 +14,11 @@ import { Button } from "@/components/ui/button";
  * own height in the flow, so the list can always be scrolled past it, whatever
  * the bar grows to at that width.
  */
-export function SelectionBar({ selection, currency, pending, allSelected, onSelectAll, onMarkPaid, onMarkUnpaid, onDelete, onClear }: {
+export function SelectionBar({ selection, currency, settled, pending, allSelected, onSelectAll, onMarkPaid, onMarkUnpaid, onDelete, onClear }: {
   selection: SelectionSummary;
   currency: string;
+  /** Every row in a paid view is settled, so its totals are payments, not debts. */
+  settled: boolean;
   pending: boolean;
   allSelected: boolean;
   onSelectAll: () => void;
@@ -51,7 +53,7 @@ export function SelectionBar({ selection, currency, pending, allSelected, onSele
           </div>
           <p className="font-display text-xl font-semibold">{formatMoney(selection.total, currency)}</p>
           <p className="truncate text-xs text-muted-foreground">
-            you owe {formatMoney(selection.youOwe, currency)} · owed to you {formatMoney(selection.owedToYou, currency)}
+            {settled ? "you paid" : "you owe"} {formatMoney(selection.youOwe, currency)} · {settled ? "paid to you" : "owed to you"} {formatMoney(selection.owedToYou, currency)}
           </p>
         </div>
 

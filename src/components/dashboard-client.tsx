@@ -433,6 +433,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
     <SelectionBar
         selection={selection}
         currency={currency}
+        settled={settled}
         pending={pending}
         allSelected={allSelected}
         onSelectAll={toggleSelectAll}
@@ -497,14 +498,18 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
   // not a button - that would nest the per-row actions inside another button.
   return (
     <div
-      onClick={() => onToggleSelected(debt.id)}
-      className={`group flex cursor-pointer items-center gap-3 rounded-2xl border p-3 transition sm:gap-4 sm:p-4 ${isSelected ? "border-primary/40 bg-[#eef4ed]" : "border-transparent bg-secondary/45 hover:border-border hover:bg-card"}`}
+      // Frozen while an action is in flight, like the buttons: a row selected
+      // mid-request was never in the submitted payload, yet the selection is
+      // cleared wholesale on success, so it would vanish without being acted on.
+      onClick={() => { if (!pending) onToggleSelected(debt.id); }}
+      className={`group flex items-center gap-3 rounded-2xl border p-3 transition sm:gap-4 sm:p-4 ${pending ? "cursor-default" : "cursor-pointer"} ${isSelected ? "border-primary/40 bg-[#eef4ed]" : "border-transparent bg-secondary/45 hover:border-border hover:bg-card"}`}
     >
       <button
         type="button"
         role="checkbox"
         aria-checked={isSelected}
         aria-label={`Select ${debt.itemName}`}
+        disabled={pending}
         onClick={(event) => { event.stopPropagation(); onToggleSelected(debt.id); }}
         className={`grid size-11 shrink-0 place-items-center rounded-2xl transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${isSelected ? "bg-primary text-primary-foreground" : debt.paymentMethod === "CREDIT_CARD" ? "bg-[#e7e2f4] text-[#65548d]" : "bg-[#e1ebda] text-primary"}`}
       >
