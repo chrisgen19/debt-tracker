@@ -54,25 +54,41 @@ export function SelectionBar({ selection, currency, pending, allSelected, onSele
           </p>
         </div>
 
-        <div className="-mx-1 flex shrink-0 items-center gap-2 overflow-x-auto px-1 pb-0.5">
+        {/* Four actions cannot sit on one phone-width line. A grid gives each a
+            full-width tap target instead of hiding the last ones off the edge,
+            and wrapping keeps that true at any width the row does still fit. */}
+        <div className="grid shrink-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           {selection.toPay.length > 0 && (
-            <Button size="sm" disabled={pending} onClick={onMarkPaid} className="shrink-0">
-              <Check className="size-4" />Mark paid ({selection.toPay.length})
+            <Button size="sm" disabled={pending} onClick={onMarkPaid} className="w-full sm:w-auto">
+              <Check className="size-4" />
+              <ActionLabel short="Paid" full="Mark paid" count={selection.toPay.length} />
             </Button>
           )}
           {selection.toUnpay.length > 0 && (
-            <Button size="sm" variant="outline" disabled={pending} onClick={onMarkUnpaid} className="shrink-0">
-              <Undo2 className="size-4" />Mark unpaid ({selection.toUnpay.length})
+            <Button size="sm" variant="outline" disabled={pending} onClick={onMarkUnpaid} className="w-full sm:w-auto">
+              <Undo2 className="size-4" />
+              <ActionLabel short="Unpaid" full="Mark unpaid" count={selection.toUnpay.length} />
             </Button>
           )}
-          <Button size="sm" variant="destructive" disabled={pending} onClick={onDelete} className="shrink-0">
+          <Button size="sm" variant="destructive" disabled={pending} onClick={onDelete} className="w-full sm:w-auto">
             <Trash2 className="size-4" />Delete ({selection.count})
           </Button>
-          <Button size="sm" variant="ghost" aria-label="Cancel selection" disabled={pending} onClick={onClear} className="shrink-0 px-2">
+          <Button size="sm" variant="ghost" aria-label="Cancel selection" disabled={pending} onClick={onClear} className="w-full sm:w-auto sm:px-2">
             <X className="size-4" />
+            <span className="sm:hidden">Cancel</span>
           </Button>
         </div>
       </div>
     </div>
+  );
+}
+
+/** Drops the "Mark " prefix on phones, where the four actions have to share two columns. */
+function ActionLabel({ short, full, count }: { short: string; full: string; count: number }) {
+  return (
+    <>
+      <span className="sm:hidden">{short} ({count})</span>
+      <span className="hidden sm:inline">{full} ({count})</span>
+    </>
   );
 }
