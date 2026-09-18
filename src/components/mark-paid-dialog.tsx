@@ -33,6 +33,7 @@ type Props = {
 export function MarkPaidDialog({ ids, total, currency, pending, receiptsEnabled, onConfirm, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [receiptId, setReceiptId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const open = ids.length > 0;
 
   // Cleared as the dialog opens, not as it closes. Dismissing with Esc or a click
@@ -70,6 +71,7 @@ export function MarkPaidDialog({ ids, total, currency, pending, receiptsEnabled,
             <ReceiptField
               receiptId={receiptId}
               onChange={setReceiptId}
+              onUploadingChange={setUploading}
               disabled={pending}
               label="Attach proof of payment"
             />
@@ -84,7 +86,7 @@ export function MarkPaidDialog({ ids, total, currency, pending, receiptsEnabled,
               type="button"
               variant="outline"
               size="lg"
-              disabled={pending}
+              disabled={pending || uploading}
               onClick={() => confirm(null)}
               className="w-full sm:order-1"
             >
@@ -94,12 +96,12 @@ export function MarkPaidDialog({ ids, total, currency, pending, receiptsEnabled,
           <Button
             type="button"
             size="lg"
-            disabled={pending}
+            disabled={pending || uploading}
             onClick={() => confirm(receiptId)}
             className="w-full sm:order-2"
           >
-            {pending ? <LoaderCircle className="size-4 animate-spin" /> : <Check className="size-4" />}
-            {pending ? "Saving" : "Mark paid"}
+            {pending || uploading ? <LoaderCircle className="size-4 animate-spin" /> : <Check className="size-4" />}
+            {pending ? "Saving" : uploading ? "Uploading" : "Mark paid"}
           </Button>
         </div>
       </div>

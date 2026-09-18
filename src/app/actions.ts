@@ -7,7 +7,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { normalizeCategories } from "@/lib/categories";
 import { prisma } from "@/lib/prisma";
-import { deleteReceiptObject, presignReceiptPut, promoteReceiptObject, receiptObjectPrefix, receiptObjectSize } from "@/lib/r2";
+import { copyReceiptObject, deleteReceiptObject, presignReceiptPut, receiptObjectPrefix, receiptObjectSize } from "@/lib/r2";
 import { IMAGE_SNIFF_BYTES, MAX_RECEIPT_BYTES, promotedKey, sniffImageType, stagingReceiptKey, validateReceiptUpload } from "@/lib/receipts";
 
 type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
@@ -131,9 +131,12 @@ async function confirmReceipt(receiptId: string | undefined, householdId: string
   // to would let the bytes be swapped after they were accepted, and a receipt that can
   // be changed after the fact is not evidence of anything.
   const key = promotedKey(receipt.key);
-  if (!(await promoteReceiptObject(receipt.key, key))) await reject("That receipt could not be stored");
+  if (!(await copyReceiptObject(receipt.key, key))) await reject("That receipt could not be stored");
 
   await prisma.receipt.update({ where: { id: receipt.id }, data: { key, status: "STORED", byteSize } });
+  // Only now, with the row pointing at the final key, is the staged copy redundant.
+  // A failure here is harmless: the lifecycle rule on the staging prefix collects it.
+  await deleteReceiptObject(receipt.key);
   return receipt.id;
 }
 

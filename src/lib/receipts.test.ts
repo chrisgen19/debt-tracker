@@ -86,25 +86,33 @@ describe("sniffImageType", () => {
 });
 
 describe("staging keys", () => {
-  it("writes uploads into a staging area inside the household prefix", () => {
-    assert.equal(stagingReceiptKey("house1", "tok1", "image/jpeg"), "receipts/house1/staging/tok1.jpg");
+  it("puts staging at the START of the key, which is all a lifecycle rule can filter on", () => {
+    const staged = stagingReceiptKey("house1", "tok1", "image/jpeg");
+    assert.equal(staged, "staging/house1/tok1.jpg");
+    // The whole point: one rule on `staging/` has to match every abandoned upload.
+    assert.ok(staged.startsWith("staging/"));
   });
 
-  it("promotes to the same name outside staging", () => {
+  it("promotes to the confirmed key for the same household and token", () => {
     const staged = stagingReceiptKey("house1", "tok1", "image/png");
-    assert.equal(promotedKey(staged), "receipts/house1/tok1.png");
     assert.equal(promotedKey(staged), receiptKey("house1", "tok1", "image/png"));
+    assert.equal(promotedKey(staged), "receipts/house1/tok1.png");
   });
 
-  it("keeps the two keys distinct, so the upload URL can never write the final one", () => {
+  it("never promotes into the staging prefix, so the upload URL cannot reach the final key", () => {
     const staged = stagingReceiptKey("h", "t", "image/webp");
     assert.notEqual(staged, promotedKey(staged));
+    assert.ok(!promotedKey(staged).startsWith("staging/"));
   });
 
-  it("only strips the staging segment, leaving a token that looks like one alone", () => {
-    // A token containing the word must not be mangled.
-    const staged = stagingReceiptKey("h", "staging", "image/jpeg");
-    assert.equal(staged, "receipts/h/staging/staging.jpg");
-    assert.equal(promotedKey(staged), "receipts/h/staging.jpg");
+  it("only rewrites the leading prefix, so a household or token named like it survives", () => {
+    const staged = stagingReceiptKey("staging", "staging", "image/jpeg");
+    assert.equal(staged, "staging/staging/staging.jpg");
+    assert.equal(promotedKey(staged), "receipts/staging/staging.jpg");
+  });
+
+  it("leaves an already-promoted key alone, so a retried confirmation is idempotent", () => {
+    const final = receiptKey("h", "t", "image/jpeg");
+    assert.equal(promotedKey(final), final);
   });
 });

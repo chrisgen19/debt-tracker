@@ -100,20 +100,26 @@ export function presignReceiptPut(key: string, contentType: ReceiptContentType, 
 }
 
 /**
- * Copy a checked object to its final key and drop the staging copy.
+ * Copy a checked object to its final key.
  *
  * The final key is never handed out as a presigned PUT, so once an object lands here
  * the bytes behind a confirmed receipt cannot be swapped for different ones.
+ *
+ * Deliberately leaves the staging copy in place. The caller drops it only after the row
+ * has committed to the new key: deleting first means a failed write leaves a PENDING
+ * row pointing at an object that no longer exists, and the retry reports an upload that
+ * never finished while the copy sits there orphaned. Copying is idempotent, so a retry
+ * that re-runs this costs nothing, and anything left behind is swept by the lifecycle
+ * rule on the staging prefix.
  */
-export async function promoteReceiptObject(fromKey: string, toKey: string): Promise<boolean> {
+export async function copyReceiptObject(fromKey: string, toKey: string): Promise<boolean> {
   const { client, bucket } = storage();
   try {
     await client.send(new CopyObjectCommand({ Bucket: bucket, Key: toKey, CopySource: `${bucket}/${fromKey}` }));
+    return true;
   } catch {
     return false;
   }
-  await deleteReceiptObject(fromKey);
-  return true;
 }
 
 /** A short-lived URL for reading one image back, handed out only after an auth check. */

@@ -20,11 +20,15 @@ import { cn } from "@/lib/utils";
 type Props = {
   receiptId: string | null;
   onChange: (receiptId: string | null) => void;
+  /** Reports whether an upload is in flight, so the parent can hold its submit button.
+   *  Without it a quick save wins the race and files the entry with no receipt, having
+   *  shown the person every sign that one was attached. */
+  onUploadingChange?: (uploading: boolean) => void;
   disabled?: boolean;
   label?: string;
 };
 
-export function ReceiptField({ receiptId, onChange, disabled, label = "Attach a receipt" }: Props) {
+export function ReceiptField({ receiptId, onChange, onUploadingChange, disabled, label = "Attach a receipt" }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   // The thumbnail is a blob URL for the local file, so it needs no round trip and is
   // there before the upload finishes. Tagged with the receipt it belongs to: `receiptId`
@@ -50,6 +54,7 @@ export function ReceiptField({ receiptId, onChange, disabled, label = "Attach a 
   async function pick(file: File) {
     setError("");
     setUploading(true);
+    onUploadingChange?.(true);
     try {
       const reduced = await downscaleImage(file);
       if (!reduced.ok) { setError(reduced.error); return; }
@@ -75,6 +80,7 @@ export function ReceiptField({ receiptId, onChange, disabled, label = "Attach a 
       setError("The upload did not go through. Check your connection and try again.");
     } finally {
       setUploading(false);
+      onUploadingChange?.(false);
     }
   }
 

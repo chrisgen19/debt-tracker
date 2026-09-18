@@ -76,8 +76,8 @@ export function receiptKey(householdId: string, token: string, contentType: Rece
   return `receipts/${householdId}/${token}.${EXTENSIONS[contentType]}`;
 }
 
-/** Marks the staging area inside a household prefix. */
-const STAGING = "staging/";
+const CONFIRMED_ROOT = "receipts/";
+const STAGING_ROOT = "staging/";
 
 /**
  * Where an upload lands before it has been checked.
@@ -86,14 +86,21 @@ const STAGING = "staging/";
  * usable until it expires, so a URL that could write the final key would let a caller
  * swap the bytes *after* they were accepted, leaving the stored proof different from
  * the proof that was approved. Nothing is ever presigned for writing at the final key.
+ *
+ * Staging is a *leading* prefix, not a folder nested under the household. An R2
+ * lifecycle rule filters on the start of the key, so `receipts/<household>/staging/...`
+ * would need one rule per household and in practice match nothing. This way a single
+ * rule on `staging/` expires every abandoned upload there will ever be.
  */
 export function stagingReceiptKey(householdId: string, token: string, contentType: ReceiptContentType): string {
-  return `receipts/${householdId}/${STAGING}${token}.${EXTENSIONS[contentType]}`;
+  return `${STAGING_ROOT}${householdId}/${token}.${EXTENSIONS[contentType]}`;
 }
 
 /** The immutable key a staged object is promoted to. */
 export function promotedKey(stagingKey: string): string {
-  return stagingKey.replace(`/${STAGING}`, "/");
+  return stagingKey.startsWith(STAGING_ROOT)
+    ? `${CONFIRMED_ROOT}${stagingKey.slice(STAGING_ROOT.length)}`
+    : stagingKey;
 }
 
 const SIGNATURES: { type: ReceiptContentType; match: (b: Uint8Array) => boolean }[] = [

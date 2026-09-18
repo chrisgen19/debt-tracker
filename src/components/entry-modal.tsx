@@ -70,10 +70,13 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
   const [notesOpen, setNotesOpen] = useState(false);
   const [receiptId, setReceiptId] = useState<string | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptUploading, setReceiptUploading] = useState(false);
 
   const symbol = useMemo(() => currencySymbol(currency), [currency]);
   const numericAmount = Number(amount || 0);
-  const canSave = numericAmount > 0 && itemName.trim().length >= 2 && !pending;
+  // `receiptUploading` is in here so a fast save cannot outrun the upload and file
+  // the entry with no receipt after the person picked one.
+  const canSave = numericAmount > 0 && itemName.trim().length >= 2 && !pending && !receiptUploading;
   const active = categories.find((entry) => entry.name === category) ?? categories[0];
 
   // Drive the native dialog from the `open` prop. showModal() gives us the top layer,
@@ -254,7 +257,7 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
             {/* Same collapsed-until-wanted idiom as the note above. Deliberately not
                 part of `canSave`: proof is optional, and a cash handover has none. */}
             {!receiptsEnabled ? null : receiptOpen ? (
-              <ReceiptField receiptId={receiptId} onChange={setReceiptId} disabled={pending} />
+              <ReceiptField receiptId={receiptId} onChange={setReceiptId} onUploadingChange={setReceiptUploading} disabled={pending} />
             ) : (
               <button type="button" onClick={() => setReceiptOpen(true)} className="flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-primary">
                 <ImagePlus className="size-4" />Add a receipt
@@ -268,7 +271,7 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
           <Button type="button" variant="ghost" size="lg" onClick={onClose} className="px-4">Cancel</Button>
           <Button type="submit" size="lg" disabled={!canSave} className="flex-1">
             {pending ? <LoaderCircle className="size-4 animate-spin" /> : <ReceiptText className="size-4" />}
-            {pending ? "Saving" : "Save entry"}
+            {pending ? "Saving" : receiptUploading ? "Uploading receipt" : "Save entry"}
           </Button>
         </footer>
       </form>

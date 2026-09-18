@@ -76,11 +76,16 @@ Setting up the bucket:
 3. Create an R2 API token with **Object Read & Write**, scoped to that one bucket.
 4. Add an object lifecycle rule expiring the prefix `staging/` after 1 day.
 
-Uploads land under `receipts/<household>/staging/` and are copied to
-`receipts/<household>/` only once the server has checked their size and confirmed the
-bytes really are an image. The final key is never handed out as a presigned URL, so the
-proof behind a confirmed receipt cannot be swapped afterwards. An upload that is never
-linked to an entry stays in staging, which is what the lifecycle rule clears up.
+Uploads land under `staging/<household>/` and are copied to `receipts/<household>/`
+only once the server has checked their size and confirmed the bytes really are an
+image. The final key is never handed out as a presigned URL, so the proof behind a
+confirmed receipt cannot be swapped afterwards.
+
+Staging is a leading prefix rather than a folder under each household because a
+lifecycle rule filters on the start of the key: one rule on `staging/` covers every
+abandoned upload, where `receipts/<household>/staging/` would need a rule per household
+and match nothing. An upload that is never linked to an entry stays there and expires
+on its own, which is why this needs no scheduled cleanup job.
 
 Uploads go straight from the browser to R2 over a presigned `PUT`, never through this
 server: a Server Action request is capped at 1MB and a phone photo is several times
