@@ -52,9 +52,11 @@ export function MarkPaidDialog({ ids, total, currency, pending, receiptsEnabled,
   const count = ids.length;
   const heading = count === 1 ? "Mark this entry paid" : `Mark ${count} entries paid`;
 
+  // The receipt is deliberately left in place. The parent keeps this open when the
+  // settle fails, and clearing here would discard a perfectly good upload just as the
+  // person needs to retry with it. The open-reset above keeps a fresh open clean.
   function confirm(id: string | null) {
     onConfirm(id);
-    setReceiptId(null);
   }
 
   return (

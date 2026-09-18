@@ -286,11 +286,20 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
     setSettling({ ids, total });
   }
 
+  // Stays open until the settle actually lands. Closing first threw away the attached
+  // receipt on any failure, so a transient error cost the upload as well as the action
+  // and left the stored object behind with nothing pointing at it.
   function confirmSettle(receiptId: string | null) {
     const ids = settling?.ids ?? [];
-    setSettling(null);
-    if (!ids.length) return;
-    runBulk(() => setDebtStatusBulk(ids, "PAID", receiptId ?? undefined));
+    if (!ids.length) { setSettling(null); return; }
+    run(async () => {
+      const result = await setDebtStatusBulk(ids, "PAID", receiptId ?? undefined);
+      if (result.ok) {
+        clearSelection();
+        setSettling(null);
+      }
+      return result;
+    });
   }
 
   // Paid views group by the day money actually changed hands, not the day the item was bought.

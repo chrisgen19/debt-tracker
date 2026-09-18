@@ -14,6 +14,10 @@ type ActionResult = { ok: true; message?: string } | { ok: false; error: string 
 
 type UploadTicket = { ok: true; receiptId: string; uploadUrl: string } | { ok: false; error: string };
 
+/** `promoted` marks the request that actually moved the object out of staging, and so
+ *  the only one entitled to move it back if the work it was for falls through. */
+type ConfirmedReceipt = { id: string; promoted: boolean };
+
 const debtSchema = z.object({
   itemName: z.string().trim().min(2, "Add a descriptive item name").max(100),
   amount: z.coerce.number().positive("Amount must be greater than zero").max(99999999),
@@ -101,14 +105,14 @@ export async function createReceiptUpload(input: unknown): Promise<UploadTicket>
  * a receipt was named but cannot be honoured, so the surrounding action reports it
  * rather than silently settling an entry with no evidence attached.
  */
-async function confirmReceipt(receiptId: string | undefined, householdId: string): Promise<string | null> {
+async function confirmReceipt(receiptId: string | undefined, householdId: string): Promise<ConfirmedReceipt | null> {
   if (!receiptId) return null;
   const receipt = await prisma.receipt.findFirst({
     where: { id: receiptId, householdId },
     select: { id: true, key: true, status: true },
   });
   if (!receipt) throw new Error("That receipt could not be found");
-  if (receipt.status === "STORED") return receipt.id;
+  if (receipt.status === "STORED") return { id: receipt.id, promoted: false };
 
   const byteSize = await receiptObjectSize(receipt.key);
   if (byteSize === null) throw new Error("The receipt did not finish uploading");
@@ -118,7 +122,10 @@ async function confirmReceipt(receiptId: string | undefined, householdId: string
   // holds. A rejected object is removed rather than left sitting in the bucket.
   const reject = async (message: string) => {
     await deleteReceiptObject(receipt.key);
-    await prisma.receipt.delete({ where: { id: receipt.id } });
+    // Conditional on the row still being the pending one this request read. A second
+    // request confirming the same receipt may already have promoted it, and deleting
+    // by id alone would then unlink a receipt from the entry that request just settled.
+    await prisma.receipt.deleteMany({ where: { id: receipt.id, status: "PENDING", key: receipt.key } });
     throw new Error(message);
   };
   if (byteSize === 0) await reject("That receipt uploaded empty");
@@ -133,11 +140,39 @@ async function confirmReceipt(receiptId: string | undefined, householdId: string
   const key = promotedKey(receipt.key);
   if (!(await copyReceiptObject(receipt.key, key))) await reject("That receipt could not be stored");
 
-  await prisma.receipt.update({ where: { id: receipt.id }, data: { key, status: "STORED", byteSize } });
+  // Guarded on PENDING so two concurrent confirmations cannot both claim the promotion.
+  // A count of zero means the other one got there first; the row is STORED either way,
+  // and only the request that actually moved it is allowed to undo it later.
+  const { count } = await prisma.receipt.updateMany({
+    where: { id: receipt.id, status: "PENDING" },
+    data: { key, status: "STORED", byteSize },
+  });
   // Only now, with the row pointing at the final key, is the staged copy redundant.
   // A failure here is harmless: the lifecycle rule on the staging prefix collects it.
   await deleteReceiptObject(receipt.key);
-  return receipt.id;
+  return { id: receipt.id, promoted: count > 0 };
+}
+
+/**
+ * Undo a promotion when the work it was meant for did not happen.
+ *
+ * Promotion moves an object out of `staging/`, which is the only prefix the lifecycle
+ * rule sweeps, so a receipt promoted for a settle that turned out to change nothing
+ * would sit in the bucket forever. Signup is open, so that is a storage-abuse path
+ * rather than a tidiness problem: name a debt id that cannot transition, repeat.
+ *
+ * Only ever touches a receipt this request promoted and that nothing has since linked.
+ */
+async function discardReceipt(confirmed: ConfirmedReceipt | null, householdId: string): Promise<void> {
+  if (!confirmed?.promoted) return;
+  const unlinked = { borrowFor: { none: {} }, paidFor: { none: {} } } as const;
+  const receipt = await prisma.receipt.findFirst({
+    where: { id: confirmed.id, householdId, ...unlinked },
+    select: { id: true, key: true },
+  });
+  if (!receipt) return;
+  await deleteReceiptObject(receipt.key);
+  await prisma.receipt.deleteMany({ where: { id: receipt.id, ...unlinked } });
 }
 
 export async function createDebt(input: unknown): Promise<ActionResult> {
@@ -157,8 +192,10 @@ export async function createDebt(input: unknown): Promise<ActionResult> {
     if (Number.isNaN(incurredAt.getTime())) return { ok: false, error: "Choose a valid date and time" };
     const settledNow = parsed.data.status === "PAID";
     const paidAt = settledNow ? new Date() : null;
-    const borrowReceiptId = await confirmReceipt(parsed.data.borrowReceiptId, user.householdId!);
-    await prisma.debt.create({
+    const confirmed = await confirmReceipt(parsed.data.borrowReceiptId, user.householdId!);
+    const borrowReceiptId = confirmed?.id ?? null;
+    try {
+      await prisma.debt.create({
       data: {
         itemName: parsed.data.itemName, amount: parsed.data.amount, category: parsed.data.category,
         paymentMethod: parsed.data.paymentMethod, lenderId: parsed.data.lenderId, borrowerId: parsed.data.borrowerId,
@@ -168,8 +205,14 @@ export async function createDebt(input: unknown): Promise<ActionResult> {
         paymentEvents: settledNow
           ? { create: { type: "PAID", amount: parsed.data.amount, occurredAt: paidAt!, householdId: user.householdId!, actorId: user.id } }
           : undefined,
-      },
-    });
+        },
+      });
+    } catch (error) {
+      // The receipt was promoted for an entry that never existed, so hand it back
+      // rather than leave it stranded outside the swept prefix.
+      await discardReceipt(confirmed, user.householdId!);
+      throw error;
+    }
     revalidatePath("/dashboard");
     return { ok: true, message: "Debt recorded" };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not save this debt" }; }
@@ -182,7 +225,8 @@ export async function setDebtStatus(id: string, status: "DEBT" | "PAID", receipt
     if (!debt) return { ok: false, error: "Debt not found" };
     // Settled outside the transaction: it round-trips to R2, and the row locks below
     // should not be held across a network call.
-    const paidReceiptId = status === "PAID" ? await confirmReceipt(receiptId, user.householdId!) : null;
+    const confirmed = status === "PAID" ? await confirmReceipt(receiptId, user.householdId!) : null;
+    const paidReceiptId = confirmed?.id ?? null;
     // The status guard lives in the UPDATE rather than in a preceding read: two
     // requests racing on the same entry would otherwise both see the old status
     // and each append an event for what is really one transition.
@@ -209,7 +253,10 @@ export async function setDebtStatus(id: string, status: "DEBT" | "PAID", receipt
       });
       return true;
     });
-    if (!applied) return { ok: true };
+    if (!applied) {
+      await discardReceipt(confirmed, user.householdId!);
+      return { ok: true };
+    }
     revalidatePath("/dashboard");
     return { ok: true, message: status === "PAID" ? "Marked as paid" : "Moved back to debt" };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update this debt" }; }
@@ -231,10 +278,21 @@ export async function setDebtStatusBulk(ids: string[], status: "DEBT" | "PAID", 
     const user = await actor();
     const parsed = debtIdsSchema.safeParse(ids);
     if (!parsed.success) return { ok: false, error: "Select between 1 and 2000 entries" };
+    // Checked before anything is promoted. Confirming first would move the object out
+    // of the swept staging prefix on the way to discovering that nothing can transition,
+    // and naming an ineligible id is free, so that is an open-ended way to fill the
+    // bucket. The transaction below still re-checks; this only avoids the promotion.
+    if (status === "PAID" && receiptId) {
+      const eligible = await prisma.debt.count({
+        where: { id: { in: parsed.data }, householdId: user.householdId!, status: { not: status } },
+      });
+      if (!eligible) return { ok: true };
+    }
     // Confirmed once for the whole selection, outside the transaction. One GCash
     // transfer settling three debts is one object in R2 and one row here, linked from
     // all three, rather than the same screenshot stored three times.
-    const paidReceiptId = status === "PAID" ? await confirmReceipt(receiptId, user.householdId!) : null;
+    const confirmed = status === "PAID" ? await confirmReceipt(receiptId, user.householdId!) : null;
+    const paidReceiptId = confirmed?.id ?? null;
     // Same reasoning as setDebtStatus: the status guard lives in the UPDATE so two
     // requests racing on the same entry cannot each append an event for what is
     // really one transition. `updateManyAndReturn` is a single UPDATE ... RETURNING,
@@ -263,7 +321,11 @@ export async function setDebtStatusBulk(ids: string[], status: "DEBT" | "PAID", 
       });
       return updated.length;
     });
-    if (!changed) return { ok: true };
+    if (!changed) {
+      // Lost the race after the check above: give the receipt back.
+      await discardReceipt(confirmed, user.householdId!);
+      return { ok: true };
+    }
     revalidatePath("/dashboard");
     return { ok: true, message: `${entryCount(changed)} marked as ${status === "PAID" ? "paid" : "unpaid"}` };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update these entries" }; }
