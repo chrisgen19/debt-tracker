@@ -6,8 +6,12 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { normalizeCategories } from "@/lib/categories";
 import { prisma } from "@/lib/prisma";
+import { presignReceiptPut, receiptObjectSize } from "@/lib/r2";
+import { receiptKey, validateReceiptUpload } from "@/lib/receipts";
 
 type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
+
+type UploadTicket = { ok: true; receiptId: string; uploadUrl: string } | { ok: false; error: string };
 
 const debtSchema = z.object({
   itemName: z.string().trim().min(2, "Add a descriptive item name").max(100),
@@ -19,6 +23,12 @@ const debtSchema = z.object({
   incurredAt: z.string().min(1),
   notes: z.string().trim().max(1000).optional(),
   status: z.enum(["DEBT", "PAID"]),
+  borrowReceiptId: z.string().min(1).optional(),
+});
+
+const uploadSchema = z.object({
+  contentType: z.string().min(1),
+  size: z.coerce.number().int().positive(),
 });
 
 const categoryConfigSchema = z.array(z.object({
@@ -45,6 +55,59 @@ async function actor() {
   return user;
 }
 
+/**
+ * Reserve a receipt row and hand back a URL the browser can upload one image to.
+ *
+ * The file itself never passes through this server: a Server Action request is capped
+ * at 1MB and a phone photo is several times that, so the bytes go browser to R2 over a
+ * presigned PUT and only the id comes back here. The row starts PENDING and is worth
+ * nothing until `confirmReceipt` has seen the object in the bucket.
+ */
+export async function createReceiptUpload(input: unknown): Promise<UploadTicket> {
+  try {
+    const user = await actor();
+    const parsed = uploadSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, error: "That file could not be read" };
+    // Re-checked server-side on purpose: the browser runs the same rules first, but
+    // only to fail fast, never as the control.
+    const valid = validateReceiptUpload(parsed.data);
+    if (!valid.ok) return { ok: false, error: valid.error };
+    const receipt = await prisma.receipt.create({
+      data: { key: "", contentType: valid.contentType, householdId: user.householdId!, uploadedById: user.id },
+      select: { id: true },
+    });
+    // The key needs the row's own cuid, so it is written back rather than precomputed.
+    const key = receiptKey(user.householdId!, receipt.id, valid.contentType);
+    await prisma.receipt.update({ where: { id: receipt.id }, data: { key } });
+    return { ok: true, receiptId: receipt.id, uploadUrl: await presignReceiptPut(key, valid.contentType) };
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not start the upload" }; }
+}
+
+/**
+ * Promote a pending receipt to STORED, but only if R2 really has the object.
+ *
+ * A browser can always claim an upload succeeded, so the bucket is the only witness
+ * that counts. Deliberately called *before* opening a database transaction: it makes a
+ * network round trip to R2, and holding row locks across that would be a bad trade.
+ *
+ * Returns the id to link, or null when the caller passed no receipt at all. Throws when
+ * a receipt was named but cannot be honoured, so the surrounding action reports it
+ * rather than silently settling an entry with no evidence attached.
+ */
+async function confirmReceipt(receiptId: string | undefined, householdId: string): Promise<string | null> {
+  if (!receiptId) return null;
+  const receipt = await prisma.receipt.findFirst({
+    where: { id: receiptId, householdId },
+    select: { id: true, key: true, status: true },
+  });
+  if (!receipt) throw new Error("That receipt could not be found");
+  if (receipt.status === "STORED") return receipt.id;
+  const byteSize = await receiptObjectSize(receipt.key);
+  if (byteSize === null) throw new Error("The receipt did not finish uploading");
+  await prisma.receipt.update({ where: { id: receipt.id }, data: { status: "STORED", byteSize } });
+  return receipt.id;
+}
+
 export async function createDebt(input: unknown): Promise<ActionResult> {
   try {
     const user = await actor();
@@ -62,12 +125,13 @@ export async function createDebt(input: unknown): Promise<ActionResult> {
     if (Number.isNaN(incurredAt.getTime())) return { ok: false, error: "Choose a valid date and time" };
     const settledNow = parsed.data.status === "PAID";
     const paidAt = settledNow ? new Date() : null;
+    const borrowReceiptId = await confirmReceipt(parsed.data.borrowReceiptId, user.householdId!);
     await prisma.debt.create({
       data: {
         itemName: parsed.data.itemName, amount: parsed.data.amount, category: parsed.data.category,
         paymentMethod: parsed.data.paymentMethod, lenderId: parsed.data.lenderId, borrowerId: parsed.data.borrowerId,
         incurredAt, notes: parsed.data.notes || null, status: parsed.data.status,
-        paidAt, householdId: user.householdId!, createdById: user.id,
+        paidAt, householdId: user.householdId!, createdById: user.id, borrowReceiptId,
         // An entry logged as already settled belongs in the payment history too.
         paymentEvents: settledNow
           ? { create: { type: "PAID", amount: parsed.data.amount, occurredAt: paidAt!, householdId: user.householdId!, actorId: user.id } }
@@ -79,11 +143,14 @@ export async function createDebt(input: unknown): Promise<ActionResult> {
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not save this debt" }; }
 }
 
-export async function setDebtStatus(id: string, status: "DEBT" | "PAID"): Promise<ActionResult> {
+export async function setDebtStatus(id: string, status: "DEBT" | "PAID", receiptId?: string): Promise<ActionResult> {
   try {
     const user = await actor();
     const debt = await prisma.debt.findFirst({ where: { id, householdId: user.householdId! }, select: { amount: true } });
     if (!debt) return { ok: false, error: "Debt not found" };
+    // Settled outside the transaction: it round-trips to R2, and the row locks below
+    // should not be held across a network call.
+    const paidReceiptId = status === "PAID" ? await confirmReceipt(receiptId, user.householdId!) : null;
     // The status guard lives in the UPDATE rather than in a preceding read: two
     // requests racing on the same entry would otherwise both see the old status
     // and each append an event for what is really one transition.
@@ -96,7 +163,12 @@ export async function setDebtStatus(id: string, status: "DEBT" | "PAID"): Promis
       // Stamped only once the row lock is held, so a request that stalled before
       // the transaction cannot write a timestamp older than one already committed.
       const occurredAt = new Date();
-      await tx.debt.update({ where: { id }, data: { paidAt: status === "PAID" ? occurredAt : null } });
+      // `paidReceiptId` rides along with `paidAt`: un-paying an entry retracts the
+      // evidence of settlement as well as the timestamp.
+      await tx.debt.update({
+        where: { id },
+        data: { paidAt: status === "PAID" ? occurredAt : null, paidReceiptId },
+      });
       await tx.paymentEvent.create({
         data: {
           type: status === "PAID" ? "PAID" : "UNPAID", amount: debt.amount, occurredAt,
@@ -122,11 +194,15 @@ export async function deleteDebt(id: string): Promise<ActionResult> {
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not delete this entry" }; }
 }
 
-export async function setDebtStatusBulk(ids: string[], status: "DEBT" | "PAID"): Promise<ActionResult> {
+export async function setDebtStatusBulk(ids: string[], status: "DEBT" | "PAID", receiptId?: string): Promise<ActionResult> {
   try {
     const user = await actor();
     const parsed = debtIdsSchema.safeParse(ids);
     if (!parsed.success) return { ok: false, error: "Select between 1 and 2000 entries" };
+    // Confirmed once for the whole selection, outside the transaction. One GCash
+    // transfer settling three debts is one object in R2 and one row here, linked from
+    // all three, rather than the same screenshot stored three times.
+    const paidReceiptId = status === "PAID" ? await confirmReceipt(receiptId, user.householdId!) : null;
     // Same reasoning as setDebtStatus: the status guard lives in the UPDATE so two
     // requests racing on the same entry cannot each append an event for what is
     // really one transition. `updateManyAndReturn` is a single UPDATE ... RETURNING,
@@ -145,7 +221,7 @@ export async function setDebtStatusBulk(ids: string[], status: "DEBT" | "PAID"):
       const occurredAt = new Date();
       await tx.debt.updateMany({
         where: { id: { in: updated.map((debt) => debt.id) } },
-        data: { paidAt: status === "PAID" ? occurredAt : null },
+        data: { paidAt: status === "PAID" ? occurredAt : null, paidReceiptId },
       });
       await tx.paymentEvent.createMany({
         data: updated.map((debt) => ({

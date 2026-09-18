@@ -6,7 +6,7 @@ import { format } from "date-fns";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import {
   ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight, Banknote, CalendarDays, Check, CheckCircle2,
-  ChevronDown, CreditCard, Ellipsis, HandCoins, Home, LayoutDashboard, LogOut,
+  ChevronDown, CreditCard, Ellipsis, HandCoins, Home, LayoutDashboard, LogOut, Paperclip,
   Plus, ReceiptText, Search, Settings2, Share2, Trash2, UserPlus, Users, WalletCards, X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -26,6 +26,8 @@ import { CategorySettings } from "@/components/category-settings";
 import { SummaryCarousel } from "@/components/summary-carousel";
 import { SelectionBar } from "@/components/selection-bar";
 import { AppBadge } from "@/components/app-badge";
+import { MarkPaidDialog } from "@/components/mark-paid-dialog";
+import { ReceiptViewer } from "@/components/receipt-viewer";
 
 type Member = { id: string; name: string; email: string };
 type Debt = {
@@ -35,6 +37,11 @@ type Debt = {
   /** Who recorded the settle, on entries loaded for a paid view. Not necessarily
    *  who handed over the money, and unknown for entries settled before the log existed. */
   markedBy?: { name: string; occurredAt: string } | null;
+  /** Evidence attached when the entry was logged, and when it was settled. Either can
+   *  be null: receipts are optional throughout. A paid receipt is shared with every
+   *  other entry the same transfer settled. */
+  borrowReceiptId: string | null;
+  paidReceiptId: string | null;
 };
 type Props = {
   currentUser: Member;
@@ -53,6 +60,9 @@ type Props = {
   chart: { day: number; borrowed: number; lent: number }[];
   /** Set by the `?new=1` app shortcut: open the entry sheet straight away. */
   openEntryOnLoad: boolean;
+  /** False when R2 is not configured. Hides every receipt affordance rather than
+   *  offering an upload that cannot succeed, so the app runs without a bucket. */
+  receiptsEnabled: boolean;
 };
 
 /** Web Share support is a fixed property of the browser, so there is nothing to subscribe to. */
@@ -70,7 +80,7 @@ function ledgerUrl(mode: LedgerMode, monthKey: string) {
 }
 
 export function DashboardClient(props: Props) {
-  const { currentUser, household, members, categories, debts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, ledgerMode, month, summary, chart, openEntryOnLoad } = props;
+  const { currentUser, household, members, categories, debts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, ledgerMode, month, summary, chart, openEntryOnLoad, receiptsEnabled } = props;
   const router = useRouter();
   // The "Add an entry" app shortcut lands on `?new=1`. Opening from initial state
   // rather than an effect means the sheet is never briefly visible as closed.
@@ -150,6 +160,7 @@ export function DashboardClient(props: Props) {
           summary={summary}
           pending={pending}
           canAdd={Boolean(partner)}
+          receiptsEnabled={receiptsEnabled}
           onModeChange={showLedger}
           onAdd={openEntry}
           run={run}
@@ -159,7 +170,7 @@ export function DashboardClient(props: Props) {
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pl-[calc(env(safe-area-inset-left)+1.25rem)] pr-[calc(env(safe-area-inset-right)+1.25rem)] pt-3 backdrop-blur md:hidden"><div className="mx-auto flex max-w-sm items-center justify-around"><button className="flex flex-col items-center gap-1 text-[11px] font-bold text-primary"><Home className="size-5" />Home</button><button disabled={!partner} onClick={openEntry} className="-mt-8 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-50"><Plus className="size-6" /></button><button onClick={() => setSettingsOpen(true)} className="flex flex-col items-center gap-1 text-[11px] font-bold text-muted-foreground"><Settings2 className="size-5" />Settings</button></div></div>
 
       <AppBadge count={openDebtCount} />
-      {partner && <EntryModal key={entrySession} open={entryOpen} currentUser={currentUser} partner={partner} currency={currency} categories={categories} pending={pending} onClose={() => setEntryOpen(false)} onSubmit={(input) => run(async () => { const result = await createDebt(input); if (result.ok) setEntryOpen(false); return result; })} />}
+      {partner && <EntryModal key={entrySession} open={entryOpen} currentUser={currentUser} partner={partner} currency={currency} categories={categories} pending={pending} receiptsEnabled={receiptsEnabled} onClose={() => setEntryOpen(false)} onSubmit={(input) => run(async () => { const result = await createDebt(input); if (result.ok) setEntryOpen(false); return result; })} />}
       {settingsOpen && <SettingsPanel currentUser={currentUser} household={household} members={members} categories={categories} pending={pending} onClose={() => setSettingsOpen(false)} run={run} />}
     </div>
   );
@@ -172,7 +183,7 @@ function SummaryCard({ label, value, currency, icon: Icon, tone, detail, actionL
   return <Card className="h-full p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p>{onDetailClick ? <button type="button" onClick={onDetailClick} className="mt-3 text-left text-xs font-bold text-primary hover:underline">{detail} · {actionLabel}</button> : <p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p>}</Card>;
 }
 
-function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, currentUser, currency, summary, pending, canAdd, onModeChange, onAdd, run }: {
+function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, currentUser, currency, summary, pending, canAdd, receiptsEnabled, onModeChange, onAdd, run }: {
   mode: LedgerMode;
   month: Props["month"];
   monthlyDebts: Debt[];
@@ -186,6 +197,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
   summary: Props["summary"];
   pending: boolean;
   canAdd: boolean;
+  receiptsEnabled: boolean;
   onModeChange: (mode: LedgerMode) => void;
   onAdd: () => void;
   run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void;
@@ -247,6 +259,29 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
       if (result.ok) clearSelection();
       return result;
     });
+  }
+
+  // Marking paid goes through a prompt so a receipt can be attached. Both the per-row
+  // button and the selection bar fill this with the ids they are about to settle, so
+  // the two paths share one dialog and one code path into the action.
+  const [settling, setSettling] = useState<{ ids: string[]; total: number } | null>(null);
+  const [viewing, setViewing] = useState<{ id: string; title: string } | null>(null);
+
+  /**
+   * With no bucket configured there is nothing to attach, so the prompt is skipped and
+   * marking paid stays the single click it has always been.
+   */
+  function askToSettle(ids: string[], total: number) {
+    if (!ids.length) return;
+    if (!receiptsEnabled) { runBulk(() => setDebtStatusBulk(ids, "PAID")); return; }
+    setSettling({ ids, total });
+  }
+
+  function confirmSettle(receiptId: string | null) {
+    const ids = settling?.ids ?? [];
+    setSettling(null);
+    if (!ids.length) return;
+    runBulk(() => setDebtStatusBulk(ids, "PAID", receiptId ?? undefined));
   }
 
   // Paid views group by the day money actually changed hands, not the day the item was bought.
@@ -416,6 +451,8 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
                       selecting={selecting}
                       isSelected={selected.has(debt.id)}
                       onToggleSelected={toggleSelected}
+                      onMarkPaid={() => askToSettle([debt.id], debt.amount)}
+                      onViewReceipt={(id, title) => setViewing({ id, title })}
                       run={run}
                     />
                   ))}
@@ -437,7 +474,12 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
         pending={pending}
         allSelected={allSelected}
         onSelectAll={toggleSelectAll}
-        onMarkPaid={() => runBulk(() => setDebtStatusBulk(selection.toPay, "PAID"))}
+        // The prompt needs the total for just the entries that will actually move,
+        // which is `toPay` rather than the whole selection.
+        onMarkPaid={() => askToSettle(
+          selection.toPay,
+          entries.filter((debt) => selection.toPay.includes(debt.id)).reduce((sum, debt) => sum + debt.amount, 0),
+        )}
         onMarkUnpaid={() => runBulk(() => setDebtStatusBulk(selection.toUnpay, "DEBT"))}
         onDelete={() => {
           if (window.confirm(`Delete ${selection.count === 1 ? "this entry" : `these ${selection.count} entries`}? This cannot be undone.`)) {
@@ -445,6 +487,22 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
           }
         }}
         onClear={clearSelection}
+      />
+
+    <MarkPaidDialog
+        ids={settling?.ids ?? []}
+        total={settling?.total ?? 0}
+        currency={currency}
+        pending={pending}
+        receiptsEnabled={receiptsEnabled}
+        onConfirm={confirmSettle}
+        onClose={() => setSettling(null)}
+      />
+
+    <ReceiptViewer
+        receiptId={viewing?.id ?? null}
+        title={viewing?.title ?? "Receipt"}
+        onClose={() => setViewing(null)}
       />
     </>
   );
@@ -474,7 +532,7 @@ function BalanceCard({ className, currentUser, partner, summary, currency }: { c
   return <Card className={`relative overflow-hidden bg-[#244b37] text-white ${className ?? ""}`}><div className="absolute -right-16 -top-16 size-52 rounded-full border-[36px] border-white/5"/><CardHeader className="relative"><p className="text-xs font-bold uppercase tracking-[.18em] text-white/60">All-time balance</p><CardTitle className="text-white">Between you two</CardTitle></CardHeader><CardContent className="relative"><div className="mb-6 flex items-center"><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#dcebdc] font-bold text-primary">{initials(currentUser.name)}</div><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><HandCoins className="size-5 text-[#f2d68d]"/><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#f4dfd5] font-bold text-[#9e4f37]">{partner ? initials(partner.name) : "?"}</div></div><p className="text-sm text-white/65">{!partner ? "Invite your partner to calculate your balance." : net > 0 ? `${partner.name.split(" ")[0]} owes you` : net < 0 ? `You owe ${partner.name.split(" ")[0]}` : "You’re perfectly even"}</p><p className="mt-1 font-display text-4xl font-semibold">{formatMoney(Math.abs(net), currency)}</p><div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-[#f2d68d]" style={{ width: `${Math.min(100, Math.max(8, Math.abs(net) / Math.max(summary.allTimeOwedToYou + summary.allTimeYouOwe, 1) * 100))}%` }} /></div></CardContent></Card>;
 }
 
-function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isSelected, onToggleSelected, run }: {
+function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isSelected, onToggleSelected, onMarkPaid, onViewReceipt, run }: {
   debt: Debt;
   settled: boolean;
   currentUser: Member;
@@ -483,6 +541,8 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
   selecting: boolean;
   isSelected: boolean;
   onToggleSelected: (id: string) => void;
+  onMarkPaid: () => void;
+  onViewReceipt: (receiptId: string, title: string) => void;
   run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void;
 }) {
   const youBorrowed = debt.borrower.id === currentUser.id;
@@ -524,6 +584,26 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
         <p className="mt-1 truncate text-xs text-muted-foreground">{debt.category} · {debt.paymentMethod === "CREDIT_CARD" ? "Credit card" : "Cash"} · {meta}</p>
         {settled && debt.markedBy && <p className="mt-1 truncate text-xs font-medium text-primary">Marked by {debt.markedBy.name.split(" ")[0]}</p>}
         {debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}
+        {/* Its own control rather than a row-wide click target, matching the checkbox
+            and the action buttons. The row deliberately is not a button. */}
+        {(debt.paidReceiptId || debt.borrowReceiptId) && (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {debt.paidReceiptId && (
+              <ReceiptChip
+                label="Payment receipt"
+                disabled={pending}
+                onOpen={() => onViewReceipt(debt.paidReceiptId!, `Payment receipt: ${debt.itemName}`)}
+              />
+            )}
+            {debt.borrowReceiptId && (
+              <ReceiptChip
+                label="Receipt"
+                disabled={pending}
+                onOpen={() => onViewReceipt(debt.borrowReceiptId!, `Receipt: ${debt.itemName}`)}
+              />
+            )}
+          </div>
+        )}
       </div>
 
       <div className="text-right">
@@ -538,7 +618,13 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
           <button
             disabled={pending}
             aria-label={debt.status === "DEBT" ? "Mark paid" : "Mark unpaid"}
-            onClick={(event) => { event.stopPropagation(); run(() => setDebtStatus(debt.id, debt.status === "DEBT" ? "PAID" : "DEBT")); }}
+            // Settling opens the prompt so proof can be attached; un-settling has
+            // nothing to attach and stays a single click.
+            onClick={(event) => {
+              event.stopPropagation();
+              if (debt.status === "DEBT") onMarkPaid();
+              else run(() => setDebtStatus(debt.id, "DEBT"));
+            }}
             className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"
           >
             <Check className="size-4" />
@@ -554,6 +640,20 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
         </div>
       )}
     </div>
+  );
+}
+
+/** A quiet marker that an entry has evidence attached, and the way in to see it. */
+function ReceiptChip({ label, disabled, onOpen }: { label: string; disabled: boolean; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={(event) => { event.stopPropagation(); onOpen(); }}
+      className="inline-flex items-center gap-1 rounded-lg bg-[#dcebdc] px-2 py-0.5 text-[11px] font-bold text-primary transition hover:bg-[#cde0cd] disabled:opacity-50"
+    >
+      <Paperclip className="size-3" />{label}
+    </button>
   );
 }
 
