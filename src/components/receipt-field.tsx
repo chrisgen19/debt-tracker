@@ -51,7 +51,9 @@ export function ReceiptField({ receiptId, onChange, disabled, label = "Attach a 
     setError("");
     setUploading(true);
     try {
-      const { blob, contentType } = await downscaleImage(file);
+      const reduced = await downscaleImage(file);
+      if (!reduced.ok) { setError(reduced.error); return; }
+      const { blob, contentType } = reduced;
       const valid = validateReceiptUpload({ contentType, size: blob.size });
       if (!valid.ok) { setError(valid.error); return; }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { MAX_RECEIPT_BYTES, receiptKey, validateReceiptUpload } from "./receipts";
+import { IMAGE_SNIFF_BYTES, MAX_RECEIPT_BYTES, receiptKey, sniffImageType, validateReceiptUpload } from "./receipts";
 
 describe("validateReceiptUpload", () => {
   it("accepts the three renderable image types", () => {
@@ -53,5 +53,34 @@ describe("receiptKey", () => {
 
   it("keeps two receipts in one household on separate keys", () => {
     assert.notEqual(receiptKey("h", "a", "image/jpeg"), receiptKey("h", "b", "image/jpeg"));
+  });
+});
+
+describe("sniffImageType", () => {
+  const pad = (head: number[]) => Uint8Array.from([...head, ...Array(IMAGE_SNIFF_BYTES).fill(0)].slice(0, IMAGE_SNIFF_BYTES));
+
+  it("identifies each allowed type from its leading bytes", () => {
+    assert.equal(sniffImageType(pad([0xff, 0xd8, 0xff, 0xe0])), "image/jpeg");
+    assert.equal(sniffImageType(pad([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "image/png");
+    assert.equal(
+      sniffImageType(Uint8Array.from([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x45, 0x42, 0x50])),
+      "image/webp",
+    );
+  });
+
+  it("rejects bytes that are not an allowed image, whatever the upload claimed", () => {
+    // "<!DOCTYPE h" - the shape of a file smuggled into an image slot.
+    assert.equal(sniffImageType(pad([0x3c, 0x21, 0x44, 0x4f, 0x43, 0x54, 0x59, 0x50, 0x45])), null);
+    assert.equal(sniffImageType(pad([0x25, 0x50, 0x44, 0x46])), null); // %PDF
+    assert.equal(sniffImageType(pad([0x50, 0x4b, 0x03, 0x04])), null); // zip
+  });
+
+  it("rejects a RIFF container that is not WebP", () => {
+    assert.equal(sniffImageType(Uint8Array.from([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x41, 0x56, 0x49, 0x20])), null);
+  });
+
+  it("refuses to guess from too few bytes", () => {
+    assert.equal(sniffImageType(Uint8Array.from([0xff, 0xd8, 0xff])), null);
+    assert.equal(sniffImageType(new Uint8Array()), null);
   });
 });

@@ -8,8 +8,9 @@
  * of where it was taken. Nobody attaching a GCash screenshot expects to publish their
  * home address along with it.
  *
- * Falls back to the original file whenever the browser cannot decode it, so a picked
- * image is never silently lost.
+ * Fails closed. Returning the original on error would quietly ship the EXIF this
+ * function exists to remove, and the caller would have no way to know it happened, so
+ * a file that cannot be re-encoded is refused instead.
  */
 
 /** Long edge, in pixels. A receipt stays comfortably legible well below this. */
@@ -37,10 +38,13 @@ async function decode(file: File): Promise<HTMLImageElement> {
   }
 }
 
-export type DownscaledImage = { blob: Blob; contentType: string };
+export type DownscaledImage =
+  | { ok: true; blob: Blob; contentType: "image/jpeg" }
+  | { ok: false; error: string };
+
+const UNREADABLE = "That image could not be read. Try a JPEG, PNG or WebP.";
 
 export async function downscaleImage(file: File): Promise<DownscaledImage> {
-  const original: DownscaledImage = { blob: file, contentType: file.type };
   try {
     const image = await decode(file);
     const { width, height } = scaledSize(image.naturalWidth, image.naturalHeight);
@@ -48,17 +52,15 @@ export async function downscaleImage(file: File): Promise<DownscaledImage> {
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d");
-    if (!context) return original;
+    if (!context) return { ok: false, error: UNREADABLE };
     context.drawImage(image, 0, 0, width, height);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", QUALITY));
-    if (!blob) return original;
-    // A small PNG screenshot can come back larger as a JPEG. Keep whichever is smaller,
-    // but only when the original was already an allowed type.
-    if (blob.size >= file.size && (file.type === "image/jpeg" || file.type === "image/png" || file.type === "image/webp")) {
-      return original;
-    }
-    return { blob, contentType: "image/jpeg" };
+    if (!blob || blob.size === 0) return { ok: false, error: UNREADABLE };
+    // Always the re-encode, even where it comes out slightly larger than a small PNG
+    // screenshot would have. Preferring the smaller file meant handing back the
+    // original untouched, metadata and all, in the most common case of the lot.
+    return { ok: true, blob, contentType: "image/jpeg" };
   } catch {
-    return original;
+    return { ok: false, error: UNREADABLE };
   }
 }

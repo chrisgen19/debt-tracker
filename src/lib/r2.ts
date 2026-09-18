@@ -1,4 +1,4 @@
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { ReceiptContentType } from "./receipts";
 
@@ -102,6 +102,32 @@ export function presignReceiptGet(key: string): Promise<string> {
   return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
     expiresIn: SIGNED_URL_TTL_SECONDS,
   });
+}
+
+/**
+ * Read the first bytes of an object, so its type can be checked against its content
+ * rather than against the header the uploader claimed. A ranged GET, so this costs
+ * twelve bytes rather than the whole image.
+ */
+export async function receiptObjectPrefix(key: string, length: number): Promise<Uint8Array | null> {
+  const { client, bucket } = storage();
+  try {
+    const object = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=0-${length - 1}` }));
+    const bytes = await object.Body?.transformToByteArray();
+    return bytes ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remove an object. Used to take back a rejected upload rather than leave it paid for. */
+export async function deleteReceiptObject(key: string): Promise<void> {
+  const { client, bucket } = storage();
+  try {
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+  } catch {
+    // Best effort: a failed cleanup must not mask the rejection that triggered it.
+  }
 }
 
 /**

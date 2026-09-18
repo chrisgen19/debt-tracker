@@ -63,6 +63,37 @@ export function validateReceiptUpload(input: { contentType: string; size: number
  * gives a per-household lifecycle rule something to match. The cuid carries the
  * unguessability: nothing about a key can be derived from an entry the viewer can see.
  */
-export function receiptKey(householdId: string, receiptId: string, contentType: ReceiptContentType): string {
-  return `receipts/${householdId}/${receiptId}.${EXTENSIONS[contentType]}`;
+/**
+ * Where the object lives in the bucket.
+ *
+ * The household prefix makes a misrouted object obvious when browsing the bucket and
+ * gives a per-household lifecycle rule something to match. `token` carries the
+ * unguessability, and is deliberately not the row id: the key has to be final at insert
+ * time, because `Receipt.key` is unique and a placeholder written now and corrected a
+ * statement later collides between two concurrent reservations.
+ */
+export function receiptKey(householdId: string, token: string, contentType: ReceiptContentType): string {
+  return `receipts/${householdId}/${token}.${EXTENSIONS[contentType]}`;
+}
+
+const SIGNATURES: { type: ReceiptContentType; match: (b: Uint8Array) => boolean }[] = [
+  { type: "image/jpeg", match: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  { type: "image/png", match: (b) => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a },
+  // RIFF....WEBP
+  { type: "image/webp", match: (b) => b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50 },
+];
+
+/** Bytes needed to identify any allowed type. WebP needs the longest look. */
+export const IMAGE_SNIFF_BYTES = 12;
+
+/**
+ * Identify an image from its leading bytes.
+ *
+ * The presigned PUT pins the `Content-Type` *header*, not the body, so a household
+ * member could sign an image slot and push arbitrary bytes into it. This is what makes
+ * the stored object prove its own type instead of being taken at its word.
+ */
+export function sniffImageType(bytes: Uint8Array): ReceiptContentType | null {
+  if (bytes.length < IMAGE_SNIFF_BYTES) return null;
+  return SIGNATURES.find((signature) => signature.match(bytes))?.type ?? null;
 }

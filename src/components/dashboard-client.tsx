@@ -459,6 +459,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
                       pending={pending}
                       selecting={selecting}
                       isSelected={selected.has(debt.id)}
+                      receiptsEnabled={receiptsEnabled}
                       onToggleSelected={toggleSelected}
                       onMarkPaid={() => askToSettle([debt.id], debt.amount)}
                       onViewReceipt={(id, title) => setViewing({ id, title })}
@@ -541,7 +542,7 @@ function BalanceCard({ className, currentUser, partner, summary, currency }: { c
   return <Card className={`relative overflow-hidden bg-[#244b37] text-white ${className ?? ""}`}><div className="absolute -right-16 -top-16 size-52 rounded-full border-[36px] border-white/5"/><CardHeader className="relative"><p className="text-xs font-bold uppercase tracking-[.18em] text-white/60">All-time balance</p><CardTitle className="text-white">Between you two</CardTitle></CardHeader><CardContent className="relative"><div className="mb-6 flex items-center"><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#dcebdc] font-bold text-primary">{initials(currentUser.name)}</div><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><HandCoins className="size-5 text-[#f2d68d]"/><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#f4dfd5] font-bold text-[#9e4f37]">{partner ? initials(partner.name) : "?"}</div></div><p className="text-sm text-white/65">{!partner ? "Invite your partner to calculate your balance." : net > 0 ? `${partner.name.split(" ")[0]} owes you` : net < 0 ? `You owe ${partner.name.split(" ")[0]}` : "You’re perfectly even"}</p><p className="mt-1 font-display text-4xl font-semibold">{formatMoney(Math.abs(net), currency)}</p><div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-[#f2d68d]" style={{ width: `${Math.min(100, Math.max(8, Math.abs(net) / Math.max(summary.allTimeOwedToYou + summary.allTimeYouOwe, 1) * 100))}%` }} /></div></CardContent></Card>;
 }
 
-function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isSelected, onToggleSelected, onMarkPaid, onViewReceipt, run }: {
+function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isSelected, receiptsEnabled, onToggleSelected, onMarkPaid, onViewReceipt, run }: {
   debt: Debt;
   settled: boolean;
   currentUser: Member;
@@ -549,6 +550,7 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
   pending: boolean;
   selecting: boolean;
   isSelected: boolean;
+  receiptsEnabled: boolean;
   onToggleSelected: (id: string) => void;
   onMarkPaid: () => void;
   onViewReceipt: (receiptId: string, title: string) => void;
@@ -595,7 +597,10 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
         {debt.notes && <p className="mt-1 truncate text-xs italic text-muted-foreground/80">“{debt.notes}”</p>}
         {/* Its own control rather than a row-wide click target, matching the checkbox
             and the action buttons. The row deliberately is not a button. */}
-        {(debt.paidReceiptId || debt.borrowReceiptId) && (
+        {/* Gated on `receiptsEnabled` too: with no bucket configured the viewer can
+            only fail, so an entry that still carries an id from a configured past
+            shows no chip rather than a dead one. */}
+        {receiptsEnabled && (debt.paidReceiptId || debt.borrowReceiptId) && (
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {debt.paidReceiptId && (
               <ReceiptChip

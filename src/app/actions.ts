@@ -1,13 +1,14 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { normalizeCategories } from "@/lib/categories";
 import { prisma } from "@/lib/prisma";
-import { presignReceiptPut, receiptObjectSize } from "@/lib/r2";
-import { receiptKey, validateReceiptUpload } from "@/lib/receipts";
+import { deleteReceiptObject, presignReceiptPut, receiptObjectPrefix, receiptObjectSize } from "@/lib/r2";
+import { IMAGE_SNIFF_BYTES, MAX_RECEIPT_BYTES, receiptKey, sniffImageType, validateReceiptUpload } from "@/lib/receipts";
 
 type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
 
@@ -72,13 +73,14 @@ export async function createReceiptUpload(input: unknown): Promise<UploadTicket>
     // only to fail fast, never as the control.
     const valid = validateReceiptUpload(parsed.data);
     if (!valid.ok) return { ok: false, error: valid.error };
+    // The key is final before the insert. Writing a placeholder and correcting it a
+    // statement later collided on the unique index between two reservations racing,
+    // and a crash in between left an empty key wedged there blocking every later one.
+    const key = receiptKey(user.householdId!, randomUUID(), valid.contentType);
     const receipt = await prisma.receipt.create({
-      data: { key: "", contentType: valid.contentType, householdId: user.householdId!, uploadedById: user.id },
+      data: { key, contentType: valid.contentType, householdId: user.householdId!, uploadedById: user.id },
       select: { id: true },
     });
-    // The key needs the row's own cuid, so it is written back rather than precomputed.
-    const key = receiptKey(user.householdId!, receipt.id, valid.contentType);
-    await prisma.receipt.update({ where: { id: receipt.id }, data: { key } });
     return { ok: true, receiptId: receipt.id, uploadUrl: await presignReceiptPut(key, valid.contentType) };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not start the upload" }; }
 }
@@ -102,8 +104,23 @@ async function confirmReceipt(receiptId: string | undefined, householdId: string
   });
   if (!receipt) throw new Error("That receipt could not be found");
   if (receipt.status === "STORED") return receipt.id;
+
   const byteSize = await receiptObjectSize(receipt.key);
   if (byteSize === null) throw new Error("The receipt did not finish uploading");
+
+  // The presigned PUT pins the Content-Type *header*, never the bytes or their length,
+  // so everything the browser claimed has to be re-established from what R2 actually
+  // holds. A rejected object is removed rather than left sitting in the bucket.
+  const reject = async (message: string) => {
+    await deleteReceiptObject(receipt.key);
+    await prisma.receipt.delete({ where: { id: receipt.id } });
+    throw new Error(message);
+  };
+  if (byteSize === 0) await reject("That receipt uploaded empty");
+  if (byteSize > MAX_RECEIPT_BYTES) await reject(`Receipts must be under ${Math.floor(MAX_RECEIPT_BYTES / 1024 / 1024)}MB`);
+  const prefix = await receiptObjectPrefix(receipt.key, IMAGE_SNIFF_BYTES);
+  if (!prefix || sniffImageType(prefix) === null) await reject("That receipt is not a readable image");
+
   await prisma.receipt.update({ where: { id: receipt.id }, data: { status: "STORED", byteSize } });
   return receipt.id;
 }
