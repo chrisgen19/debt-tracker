@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { IMAGE_SNIFF_BYTES, MAX_RECEIPT_BYTES, receiptKey, sniffImageType, validateReceiptUpload } from "./receipts";
+import { IMAGE_SNIFF_BYTES, MAX_RECEIPT_BYTES, promotedKey, receiptKey, sniffImageType, stagingReceiptKey, validateReceiptUpload } from "./receipts";
 
 describe("validateReceiptUpload", () => {
   it("accepts the three renderable image types", () => {
@@ -82,5 +82,29 @@ describe("sniffImageType", () => {
   it("refuses to guess from too few bytes", () => {
     assert.equal(sniffImageType(Uint8Array.from([0xff, 0xd8, 0xff])), null);
     assert.equal(sniffImageType(new Uint8Array()), null);
+  });
+});
+
+describe("staging keys", () => {
+  it("writes uploads into a staging area inside the household prefix", () => {
+    assert.equal(stagingReceiptKey("house1", "tok1", "image/jpeg"), "receipts/house1/staging/tok1.jpg");
+  });
+
+  it("promotes to the same name outside staging", () => {
+    const staged = stagingReceiptKey("house1", "tok1", "image/png");
+    assert.equal(promotedKey(staged), "receipts/house1/tok1.png");
+    assert.equal(promotedKey(staged), receiptKey("house1", "tok1", "image/png"));
+  });
+
+  it("keeps the two keys distinct, so the upload URL can never write the final one", () => {
+    const staged = stagingReceiptKey("h", "t", "image/webp");
+    assert.notEqual(staged, promotedKey(staged));
+  });
+
+  it("only strips the staging segment, leaving a token that looks like one alone", () => {
+    // A token containing the word must not be mangled.
+    const staged = stagingReceiptKey("h", "staging", "image/jpeg");
+    assert.equal(staged, "receipts/h/staging/staging.jpg");
+    assert.equal(promotedKey(staged), "receipts/h/staging.jpg");
   });
 });

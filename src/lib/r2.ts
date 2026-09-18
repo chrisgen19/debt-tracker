@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { ReceiptContentType } from "./receipts";
 
@@ -79,21 +79,41 @@ function storage(): { client: S3Client; bucket: string } {
 /**
  * A URL the browser can PUT one image to, straight to R2.
  *
- * `ContentType` is part of the signature, so the browser has to send exactly this
- * header back or R2 answers 403 SignatureDoesNotMatch. That is the point: it pins the
- * upload to the type the server approved, so an approved JPEG slot cannot receive
- * something else.
+ * Both the type and the exact length are part of the signature, so the browser has to
+ * match them or R2 answers 403. The length matters most: signup is open, so anyone can
+ * reach this, and without a signed length a caller could declare a small upload and
+ * then PUT gigabytes. R2 refuses the mismatch outright, which means the ceiling is
+ * enforced at upload time rather than at a confirmation step an abuser can simply skip.
  */
-export function presignReceiptPut(key: string, contentType: ReceiptContentType): Promise<string> {
+export function presignReceiptPut(key: string, contentType: ReceiptContentType, contentLength: number): Promise<string> {
   const { client, bucket } = storage();
-  return getSignedUrl(client, new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType }), {
-    expiresIn: SIGNED_URL_TTL_SECONDS,
-    // Without this the SDK signs `host` alone, and `ContentType` becomes a hint the
-    // uploader is free to ignore: the PUT would still succeed while storing whatever
-    // type the browser sent. Signing it makes the type part of the signature, so an
-    // approved image slot cannot be used to park an HTML file in the bucket.
-    signableHeaders: new Set(["content-type"]),
-  });
+  return getSignedUrl(
+    client,
+    new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType, ContentLength: contentLength }),
+    {
+      expiresIn: SIGNED_URL_TTL_SECONDS,
+      // Without this the SDK signs `host` alone and both values become hints the
+      // uploader is free to ignore, while the PUT still succeeds.
+      signableHeaders: new Set(["content-type", "content-length"]),
+    },
+  );
+}
+
+/**
+ * Copy a checked object to its final key and drop the staging copy.
+ *
+ * The final key is never handed out as a presigned PUT, so once an object lands here
+ * the bytes behind a confirmed receipt cannot be swapped for different ones.
+ */
+export async function promoteReceiptObject(fromKey: string, toKey: string): Promise<boolean> {
+  const { client, bucket } = storage();
+  try {
+    await client.send(new CopyObjectCommand({ Bucket: bucket, Key: toKey, CopySource: `${bucket}/${fromKey}` }));
+  } catch {
+    return false;
+  }
+  await deleteReceiptObject(fromKey);
+  return true;
 }
 
 /** A short-lived URL for reading one image back, handed out only after an auth check. */

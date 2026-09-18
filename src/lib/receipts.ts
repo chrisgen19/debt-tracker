@@ -76,6 +76,26 @@ export function receiptKey(householdId: string, token: string, contentType: Rece
   return `receipts/${householdId}/${token}.${EXTENSIONS[contentType]}`;
 }
 
+/** Marks the staging area inside a household prefix. */
+const STAGING = "staging/";
+
+/**
+ * Where an upload lands before it has been checked.
+ *
+ * Uploads go here and are copied to the real key once confirmed. A presigned PUT stays
+ * usable until it expires, so a URL that could write the final key would let a caller
+ * swap the bytes *after* they were accepted, leaving the stored proof different from
+ * the proof that was approved. Nothing is ever presigned for writing at the final key.
+ */
+export function stagingReceiptKey(householdId: string, token: string, contentType: ReceiptContentType): string {
+  return `receipts/${householdId}/${STAGING}${token}.${EXTENSIONS[contentType]}`;
+}
+
+/** The immutable key a staged object is promoted to. */
+export function promotedKey(stagingKey: string): string {
+  return stagingKey.replace(`/${STAGING}`, "/");
+}
+
 const SIGNATURES: { type: ReceiptContentType; match: (b: Uint8Array) => boolean }[] = [
   { type: "image/jpeg", match: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
   { type: "image/png", match: (b) => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a },

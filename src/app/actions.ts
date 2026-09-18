@@ -7,8 +7,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { normalizeCategories } from "@/lib/categories";
 import { prisma } from "@/lib/prisma";
-import { deleteReceiptObject, presignReceiptPut, receiptObjectPrefix, receiptObjectSize } from "@/lib/r2";
-import { IMAGE_SNIFF_BYTES, MAX_RECEIPT_BYTES, receiptKey, sniffImageType, validateReceiptUpload } from "@/lib/receipts";
+import { deleteReceiptObject, presignReceiptPut, promoteReceiptObject, receiptObjectPrefix, receiptObjectSize } from "@/lib/r2";
+import { IMAGE_SNIFF_BYTES, MAX_RECEIPT_BYTES, promotedKey, sniffImageType, stagingReceiptKey, validateReceiptUpload } from "@/lib/receipts";
 
 type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
 
@@ -76,12 +76,17 @@ export async function createReceiptUpload(input: unknown): Promise<UploadTicket>
     // The key is final before the insert. Writing a placeholder and correcting it a
     // statement later collided on the unique index between two reservations racing,
     // and a crash in between left an empty key wedged there blocking every later one.
-    const key = receiptKey(user.householdId!, randomUUID(), valid.contentType);
+    // It points at staging: `confirmReceipt` copies the object to its real key once it
+    // has been checked, and that key is never presigned for writing.
+    const key = stagingReceiptKey(user.householdId!, randomUUID(), valid.contentType);
     const receipt = await prisma.receipt.create({
       data: { key, contentType: valid.contentType, householdId: user.householdId!, uploadedById: user.id },
       select: { id: true },
     });
-    return { ok: true, receiptId: receipt.id, uploadUrl: await presignReceiptPut(key, valid.contentType) };
+    // Signing the exact length is what actually caps storage. The confirmation checks
+    // below only run when a caller comes back to link the receipt, and an abuser simply
+    // would not, so the ceiling has to bite at upload time.
+    return { ok: true, receiptId: receipt.id, uploadUrl: await presignReceiptPut(key, valid.contentType, parsed.data.size) };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not start the upload" }; }
 }
 
@@ -121,7 +126,14 @@ async function confirmReceipt(receiptId: string | undefined, householdId: string
   const prefix = await receiptObjectPrefix(receipt.key, IMAGE_SNIFF_BYTES);
   if (!prefix || sniffImageType(prefix) === null) await reject("That receipt is not a readable image");
 
-  await prisma.receipt.update({ where: { id: receipt.id }, data: { status: "STORED", byteSize } });
+  // Moved out of staging only once it has passed. The upload URL stays valid for the
+  // rest of its five minutes, so leaving a confirmed receipt at the key that URL writes
+  // to would let the bytes be swapped after they were accepted, and a receipt that can
+  // be changed after the fact is not evidence of anything.
+  const key = promotedKey(receipt.key);
+  if (!(await promoteReceiptObject(receipt.key, key))) await reject("That receipt could not be stored");
+
+  await prisma.receipt.update({ where: { id: receipt.id }, data: { key, status: "STORED", byteSize } });
   return receipt.id;
 }
 
