@@ -229,7 +229,16 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
   }, [viewKey]);
   const clearSelection = useCallback(() => updateSelected(() => NO_SELECTION), [updateSelected]);
   useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) { if (event.key === "Escape") clearSelection(); }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      // An open modal owns Escape: the browser is about to close it, and the selection
+      // underneath should outlive that. Otherwise opening the settle prompt over a
+      // five-entry selection and changing your mind costs you the selection too, and
+      // it has to be rebuilt from scratch. The dialog is still `open` here because
+      // listeners run before the browser's default action closes it.
+      if (document.querySelector("dialog[open]")) return;
+      clearSelection();
+    }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [clearSelection]);
