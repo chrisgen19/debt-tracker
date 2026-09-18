@@ -7,7 +7,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { normalizeCategories } from "@/lib/categories";
 import { prisma } from "@/lib/prisma";
-import { copyReceiptObject, deleteReceiptObject, presignReceiptPut, receiptObjectPrefix, receiptObjectSize } from "@/lib/r2";
+import { copyReceiptObject, deleteReceiptObject, presignReceiptPut, receiptObjectPrefix, receiptObjectSize, storageKeyPrefix } from "@/lib/r2";
 import { IMAGE_SNIFF_BYTES, MAX_RECEIPT_BYTES, promotedKey, sniffImageType, stagingReceiptKey, validateReceiptUpload } from "@/lib/receipts";
 
 type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
@@ -82,7 +82,7 @@ export async function createReceiptUpload(input: unknown): Promise<UploadTicket>
     // and a crash in between left an empty key wedged there blocking every later one.
     // It points at staging: `confirmReceipt` copies the object to its real key once it
     // has been checked, and that key is never presigned for writing.
-    const key = stagingReceiptKey(user.householdId!, randomUUID(), valid.contentType);
+    const key = stagingReceiptKey(storageKeyPrefix(), user.householdId!, randomUUID(), valid.contentType);
     const receipt = await prisma.receipt.create({
       data: { key, contentType: valid.contentType, householdId: user.householdId!, uploadedById: user.id },
       select: { id: true },
@@ -137,6 +137,8 @@ async function confirmReceipt(receiptId: string | undefined, householdId: string
   // rest of its five minutes, so leaving a confirmed receipt at the key that URL writes
   // to would let the bytes be swapped after they were accepted, and a receipt that can
   // be changed after the fact is not evidence of anything.
+  // Read out of the stored key, so an upload reserved before R2_KEY_PREFIX changed
+  // still promotes into the tree it was staged in rather than being self-copied away.
   const key = promotedKey(receipt.key);
   if (!(await copyReceiptObject(receipt.key, key))) await reject("That receipt could not be stored");
 

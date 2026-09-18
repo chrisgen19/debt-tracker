@@ -72,12 +72,14 @@ export function validateReceiptUpload(input: { contentType: string; size: number
  * time, because `Receipt.key` is unique and a placeholder written now and corrected a
  * statement later collides between two concurrent reservations.
  */
-export function receiptKey(householdId: string, token: string, contentType: ReceiptContentType): string {
-  return `receipts/${householdId}/${token}.${EXTENSIONS[contentType]}`;
+export function receiptKey(prefix: string, householdId: string, token: string, contentType: ReceiptContentType): string {
+  return `${prefix}${CONFIRMED_ROOT}${householdId}/${token}.${EXTENSIONS[contentType]}`;
 }
 
-const CONFIRMED_ROOT = "receipts/";
-const STAGING_ROOT = "staging/";
+const CONFIRMED_SEGMENT = "receipts";
+const STAGING_SEGMENT = "staging";
+const CONFIRMED_ROOT = `${CONFIRMED_SEGMENT}/`;
+const STAGING_ROOT = `${STAGING_SEGMENT}/`;
 
 /**
  * Where an upload lands before it has been checked.
@@ -92,15 +94,51 @@ const STAGING_ROOT = "staging/";
  * would need one rule per household and in practice match nothing. This way a single
  * rule on `staging/` expires every abandoned upload there will ever be.
  */
-export function stagingReceiptKey(householdId: string, token: string, contentType: ReceiptContentType): string {
-  return `${STAGING_ROOT}${householdId}/${token}.${EXTENSIONS[contentType]}`;
+export function stagingReceiptKey(prefix: string, householdId: string, token: string, contentType: ReceiptContentType): string {
+  return `${prefix}${STAGING_ROOT}${householdId}/${token}.${EXTENSIONS[contentType]}`;
 }
 
-/** The immutable key a staged object is promoted to. */
+/**
+ * The immutable key a staged object is promoted to.
+ *
+ * Read out of the key itself rather than from the current configuration. An upload
+ * reserved before `R2_KEY_PREFIX` changed still has to promote into the tree it was
+ * staged in; taking today's prefix would leave the key untouched and turn the copy
+ * that follows into a self-copy, destroying the object it was meant to preserve.
+ *
+ * Matched on whole path segments. Prefixes cannot contain a slash and the reserved
+ * names below keep `staging` out of that position, so exactly one segment can match.
+ */
 export function promotedKey(stagingKey: string): string {
-  return stagingKey.startsWith(STAGING_ROOT)
-    ? `${CONFIRMED_ROOT}${stagingKey.slice(STAGING_ROOT.length)}`
-    : stagingKey;
+  const parts = stagingKey.split("/");
+  const at = parts.indexOf(STAGING_SEGMENT);
+  if (at === -1) return stagingKey;
+  parts[at] = CONFIRMED_SEGMENT;
+  return parts.join("/");
+}
+
+/**
+ * Normalise a configured key prefix.
+ *
+ * Local development and production share one bucket, and nothing in a key says which
+ * wrote it. A prefix keeps them in separate trees so a cleanup script, a reset or a
+ * stray test can never reach the other one's objects. Production leaves this empty,
+ * which keeps every key already in the bucket exactly where it is.
+ */
+export function normalizeKeyPrefix(value: string | undefined): string {
+  const trimmed = (value ?? "").trim().replace(/^\/+|\/+$/g, "");
+  if (!trimmed) return "";
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(trimmed)) {
+    throw new Error("R2_KEY_PREFIX must be lowercase letters, digits and dashes, for example \"dev\"");
+  }
+  // `staging` would put confirmed objects at `staging/receipts/...`, inside the tree the
+  // lifecycle rule expires after a day: the rows would survive while their images were
+  // deleted underneath them. It would also give `promotedKey` two candidate segments.
+  // `receipts` collides with the confirmed root for the same reason.
+  if (trimmed === STAGING_SEGMENT || trimmed === CONFIRMED_SEGMENT) {
+    throw new Error(`R2_KEY_PREFIX cannot be "${trimmed}": it is reserved for the storage layout`);
+  }
+  return `${trimmed}/`;
 }
 
 const SIGNATURES: { type: ReceiptContentType; match: (b: Uint8Array) => boolean }[] = [
