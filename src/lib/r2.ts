@@ -1,6 +1,6 @@
 import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { ReceiptContentType } from "./receipts";
+import { normalizeKeyPrefix, type ReceiptContentType } from "./receipts";
 
 /**
  * Cloudflare R2 access for receipt images.
@@ -37,6 +37,17 @@ function readConfig(): R2Config | null {
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
   if (!accountId || !bucket || !accessKeyId || !secretAccessKey) return null;
   return { accountId, bucket, accessKeyId, secretAccessKey };
+}
+
+/**
+ * The prefix every new key is written under.
+ *
+ * Read here rather than in `receipts.ts`, which the browser also imports: that module
+ * has to stay free of server configuration. Empty in production, so keys already in
+ * the bucket are untouched and keep resolving.
+ */
+export function storageKeyPrefix(): string {
+  return normalizeKeyPrefix(process.env.R2_KEY_PREFIX);
 }
 
 /**

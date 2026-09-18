@@ -53,7 +53,14 @@ R2_ACCOUNT_ID=""            # the hex id inside your R2 endpoint URL
 R2_BUCKET="owewell-receipts"
 R2_ACCESS_KEY_ID=""
 R2_SECRET_ACCESS_KEY=""
+R2_KEY_PREFIX="dev"         # local only; leave unset in production
 ```
+
+`R2_KEY_PREFIX` exists because local development and production share one bucket, and
+nothing in an object key says which wrote it. With it set, local runs write under
+`dev/receipts/...` and `dev/staging/...`, so a cleanup script, a database reset or a
+stray test can never reach a production object. Production leaves it unset, which keeps
+every key already in the bucket exactly where it is.
 
 Setting up the bucket:
 
