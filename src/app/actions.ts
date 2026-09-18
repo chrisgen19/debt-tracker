@@ -166,13 +166,19 @@ async function confirmReceipt(receiptId: string | undefined, householdId: string
 async function discardReceipt(confirmed: ConfirmedReceipt | null, householdId: string): Promise<void> {
   if (!confirmed?.promoted) return;
   const unlinked = { borrowFor: { none: {} }, paidFor: { none: {} } } as const;
+  // Read only for the key; the row itself has not been claimed yet.
   const receipt = await prisma.receipt.findFirst({
-    where: { id: confirmed.id, householdId, ...unlinked },
-    select: { id: true, key: true },
+    where: { id: confirmed.id, householdId },
+    select: { key: true },
   });
   if (!receipt) return;
-  await deleteReceiptObject(receipt.key);
-  await prisma.receipt.deleteMany({ where: { id: receipt.id, ...unlinked } });
+  // Deleting the row *is* the claim, and it is the object's only referent. Removing the
+  // object first left a window where a concurrent request could link the row in between:
+  // the delete below would then rightly spare it, but the image behind it was already
+  // gone, leaving a settled entry pointing at nothing. A count of zero means somebody
+  // linked it first, and the object has to stay.
+  const { count } = await prisma.receipt.deleteMany({ where: { id: confirmed.id, householdId, ...unlinked } });
+  if (count > 0) await deleteReceiptObject(receipt.key);
 }
 
 export async function createDebt(input: unknown): Promise<ActionResult> {
