@@ -22,6 +22,13 @@ enum PaymentEventType {
   UNPAID
 }
 
+enum ReceiptStatus {
+  /// Presigned and handed to the browser, but the object is not confirmed in R2 yet.
+  PENDING
+  /// HeadObject succeeded, so the image is really there and safe to link to an entry.
+  STORED
+}
+
 model User {
   id            String    @id
   name          String
@@ -33,12 +40,13 @@ model User {
   sessions      Session[]
   accounts      Account[]
 
-  householdId   String?
-  household     Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
-  lentDebts     Debt[]     @relation("DebtLender")
-  borrowedDebts Debt[]     @relation("DebtBorrower")
-  createdDebts  Debt[]     @relation("DebtCreator")
-  paymentEvents PaymentEvent[] @relation("PaymentActor")
+  householdId      String?
+  household        Household?     @relation(fields: [householdId], references: [id], onDelete: SetNull)
+  lentDebts        Debt[]         @relation("DebtLender")
+  borrowedDebts    Debt[]         @relation("DebtBorrower")
+  createdDebts     Debt[]         @relation("DebtCreator")
+  paymentEvents    PaymentEvent[] @relation("PaymentActor")
+  uploadedReceipts Receipt[]      @relation("ReceiptUploader")
 
   @@index([householdId])
   @@map("user")
@@ -76,34 +84,35 @@ model Account {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
-  @@index([userId])
   @@unique([issuer, accountId])
+  @@index([userId])
   @@map("account")
 }
 
 model Verification {
-  id         String    @id
+  id         String   @id
   identifier String
   value      String
   expiresAt  DateTime
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@index([identifier])
   @@map("verification")
 }
 
 model Household {
-  id             String   @id @default(cuid())
-  name           String   @default("Our household")
-  inviteCode     String   @unique
-  currency       String   @default("PHP")
+  id             String         @id @default(cuid())
+  name           String         @default("Our household")
+  inviteCode     String         @unique
+  currency       String         @default("PHP")
   categoryConfig Json?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
   members        User[]
   debts          Debt[]
   paymentEvents  PaymentEvent[]
+  receipts       Receipt[]
 }
 
 model Debt {
@@ -127,6 +136,15 @@ model Debt {
   borrower    User      @relation("DebtBorrower", fields: [borrowerId], references: [id], onDelete: Restrict)
   createdById String
   createdBy   User      @relation("DebtCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  /// Evidence the money changed hands when the entry was logged. Optional: plenty of
+  /// household debts start as a verbal "I'll pay you back".
+  borrowReceiptId String?
+  borrowReceipt   Receipt? @relation("DebtBorrowReceipt", fields: [borrowReceiptId], references: [id], onDelete: SetNull)
+  /// Evidence of settlement. Cleared alongside `paidAt` when an entry is un-paid.
+  /// One receipt can be shared by every entry a single transfer settled.
+  paidReceiptId   String?
+  paidReceipt     Receipt? @relation("DebtPaidReceipt", fields: [paidReceiptId], references: [id], onDelete: SetNull)
 
   paymentEvents PaymentEvent[]
 
@@ -156,4 +174,31 @@ model PaymentEvent {
 
   @@index([householdId, occurredAt])
   @@index([debtId, occurredAt])
+}
+
+/// One uploaded image in R2, owned by a household rather than by a single entry.
+/// That indirection is the point: settling three debts with one GCash transfer
+/// links all three to this same row, so the screenshot is stored and fetched once.
+model Receipt {
+  id          String        @id @default(cuid())
+  /// R2 object key. Unique so a retry can never quietly point two rows at one object.
+  key         String        @unique
+  contentType String
+  /// Filled in from HeadObject at confirm time, so it reflects what R2 actually holds
+  /// rather than what the browser claimed before uploading.
+  byteSize    Int?
+  status      ReceiptStatus @default(PENDING)
+  createdAt   DateTime      @default(now())
+
+  householdId  String
+  household    Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  uploadedById String
+  uploadedBy   User      @relation("ReceiptUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  borrowFor Debt[] @relation("DebtBorrowReceipt")
+  paidFor   Debt[] @relation("DebtPaidReceipt")
+
+  /// Drives the orphan sweep: pending rows older than a day own an object nothing
+  /// will ever link to.
+  @@index([householdId, status, createdAt])
 }

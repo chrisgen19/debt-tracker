@@ -2,6 +2,7 @@ import { addMonths, endOfMonth, format, isValid, parse } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { normalizeCategories } from "@/lib/categories";
 import type { LedgerMode } from "@/lib/ledger";
+import { isReceiptStorageConfigured } from "@/lib/r2";
 import { requireUser } from "@/lib/session";
 import { DashboardClient } from "@/components/dashboard-client";
 
@@ -100,6 +101,10 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
     paidAt: debt.paidAt?.toISOString() ?? null,
     lender: debt.lender,
     borrower: debt.borrower,
+    // Ids only. The images themselves are fetched one at a time through
+    // /api/receipts/[id], which re-checks the session on every read.
+    borrowReceiptId: debt.borrowReceiptId,
+    paidReceiptId: debt.paidReceiptId,
   });
   const debts = monthDebts.map(serializeDebt);
   const openDebts = openAll.map(serializeDebt);
@@ -146,6 +151,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
       summary={{ youOwe, owedToYou, paidByYou: Number(paidByMe._sum.amount ?? 0), paidToYou: Number(paidToMe._sum.amount ?? 0), allTimeYouOwe, allTimeOwedToYou, allTimePaidByYou, allTimePaidToYou }}
       chart={days}
       openEntryOnLoad={query.new === "1"}
+      receiptsEnabled={isReceiptStorageConfigured()}
     />
   );
 }

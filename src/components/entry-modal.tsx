@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { format, isSameDay, subDays } from "date-fns";
 import {
-  ArrowLeftRight, Banknote, CalendarDays, Check, CreditCard, HeartPulse, House, LoaderCircle,
+  ArrowLeftRight, Banknote, CalendarDays, Check, CreditCard, HeartPulse, House, ImagePlus, LoaderCircle,
   Plane, Plus, ReceiptText, Shapes, ShoppingBag, ShoppingBasket, StickyNote, UtensilsCrossed, X, Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ReceiptField } from "@/components/receipt-field";
 import { sanitizeAmount } from "@/lib/amount";
 import type { CategoryOption } from "@/lib/categories";
 import { currencySymbol, initials } from "@/lib/utils";
@@ -21,6 +22,8 @@ type Props = {
   currency: string;
   categories: CategoryOption[];
   pending: boolean;
+  /** False when R2 is unconfigured: the receipt affordance is hidden entirely. */
+  receiptsEnabled: boolean;
   onClose: () => void;
   onSubmit: (input: Record<string, unknown>) => void;
 };
@@ -53,7 +56,7 @@ function toLocalInput(date: Date) {
   return local.toISOString().slice(0, 16);
 }
 
-export function EntryModal({ open, currentUser, partner, currency, categories, pending, onClose, onSubmit }: Props) {
+export function EntryModal({ open, currentUser, partner, currency, categories, pending, receiptsEnabled, onClose, onSubmit }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [direction, setDirection] = useState<Direction>("BORROWED");
   const [amount, setAmount] = useState("");
@@ -65,10 +68,15 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
   const [settled, setSettled] = useState(false);
   const [notes, setNotes] = useState("");
   const [notesOpen, setNotesOpen] = useState(false);
+  const [receiptId, setReceiptId] = useState<string | null>(null);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptUploading, setReceiptUploading] = useState(false);
 
   const symbol = useMemo(() => currencySymbol(currency), [currency]);
   const numericAmount = Number(amount || 0);
-  const canSave = numericAmount > 0 && itemName.trim().length >= 2 && !pending;
+  // `receiptUploading` is in here so a fast save cannot outrun the upload and file
+  // the entry with no receipt after the person picked one.
+  const canSave = numericAmount > 0 && itemName.trim().length >= 2 && !pending && !receiptUploading;
   const active = categories.find((entry) => entry.name === category) ?? categories[0];
 
   // Drive the native dialog from the `open` prop. showModal() gives us the top layer,
@@ -114,6 +122,7 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
       status: settled ? "PAID" : "DEBT",
       lenderId: direction === "BORROWED" ? partner.id : currentUser.id,
       borrowerId: direction === "BORROWED" ? currentUser.id : partner.id,
+      borrowReceiptId: receiptId ?? undefined,
     });
   }
 
@@ -244,6 +253,17 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
                 <Plus className="size-3.5" />
               </button>
             )}
+
+            {/* Same collapsed-until-wanted idiom as the note above. Deliberately not
+                part of `canSave`: proof is optional, and a cash handover has none. */}
+            {!receiptsEnabled ? null : receiptOpen ? (
+              <ReceiptField receiptId={receiptId} onChange={setReceiptId} onUploadingChange={setReceiptUploading} disabled={pending} />
+            ) : (
+              <button type="button" onClick={() => setReceiptOpen(true)} className="flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-primary">
+                <ImagePlus className="size-4" />Add a receipt
+                <Plus className="size-3.5" />
+              </button>
+            )}
           </section>
         </div>
 
@@ -251,7 +271,7 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
           <Button type="button" variant="ghost" size="lg" onClick={onClose} className="px-4">Cancel</Button>
           <Button type="submit" size="lg" disabled={!canSave} className="flex-1">
             {pending ? <LoaderCircle className="size-4 animate-spin" /> : <ReceiptText className="size-4" />}
-            {pending ? "Saving" : "Save entry"}
+            {pending ? "Saving" : receiptUploading ? "Uploading receipt" : "Save entry"}
           </Button>
         </footer>
       </form>

@@ -34,6 +34,64 @@ Requirements: Node.js 20.19+ and PostgreSQL.
 
 Open [http://localhost:3000](http://localhost:3000). The first person creates an account and shares the invite code shown in the dashboard. The second person creates their own account, selects “I have their code,” and joins the first household.
 
+## Receipt storage
+
+Entries can carry an optional receipt image: one attached when the entry is logged, and
+one attached when it is settled. Marking several entries paid at once uploads a single
+image and links it to all of them, because one GCash or Maribank transfer often clears
+several debts.
+
+Images live in a **private** Cloudflare R2 bucket. Nothing is ever served from a public
+bucket URL: `/api/receipts/<id>` checks the session and the viewer's household, then
+redirects to a five-minute signed URL.
+
+These four variables are optional. Leave them unset and the app runs normally with every
+receipt affordance hidden, so the feature can be deployed before the bucket exists.
+
+```bash
+R2_ACCOUNT_ID=""            # the hex id inside your R2 endpoint URL
+R2_BUCKET="owewell-receipts"
+R2_ACCESS_KEY_ID=""
+R2_SECRET_ACCESS_KEY=""
+```
+
+Setting up the bucket:
+
+1. Create a bucket with **public access off** and no custom domain.
+2. Add a CORS policy allowing `PUT` from your origins, or browser uploads fail even
+   though the signature is valid:
+
+   ```json
+   [
+     {
+       "AllowedOrigins": ["https://debt.cgdev.site", "http://localhost:3000"],
+       "AllowedMethods": ["PUT"],
+       "AllowedHeaders": ["content-type"],
+       "ExposeHeaders": ["ETag"],
+       "MaxAgeSeconds": 3600
+     }
+   ]
+   ```
+
+3. Create an R2 API token with **Object Read & Write**, scoped to that one bucket.
+4. Add an object lifecycle rule expiring the prefix `staging/` after 1 day.
+
+Uploads land under `staging/<household>/` and are copied to `receipts/<household>/`
+only once the server has checked their size and confirmed the bytes really are an
+image. The final key is never handed out as a presigned URL, so the proof behind a
+confirmed receipt cannot be swapped afterwards.
+
+Staging is a leading prefix rather than a folder under each household because a
+lifecycle rule filters on the start of the key: one rule on `staging/` covers every
+abandoned upload, where `receipts/<household>/staging/` would need a rule per household
+and match nothing. An upload that is never linked to an entry stays there and expires
+on its own, which is why this needs no scheduled cleanup job.
+
+Uploads go straight from the browser to R2 over a presigned `PUT`, never through this
+server: a Server Action request is capped at 1MB and a phone photo is several times
+that. Images are downscaled to 1600px and re-encoded client-side first, which also
+strips EXIF GPS data from phone photos.
+
 ## Checks
 
 ```bash
