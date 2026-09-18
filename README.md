@@ -62,6 +62,11 @@ nothing in an object key says which wrote it. With it set, local runs write unde
 stray test can never reach a production object. Production leaves it unset, which keeps
 every key already in the bucket exactly where it is.
 
+Note that a prefixed environment sits outside the `staging/` rule, which is why it wants
+its own rule on `dev/`. `staging` and `receipts` are rejected as prefix values: either
+would file confirmed objects inside a lifecycle-managed tree and delete live receipts
+out from under their rows.
+
 Setting up the bucket:
 
 1. Create a bucket with **public access off** and no custom domain.
@@ -81,7 +86,10 @@ Setting up the bucket:
    ```
 
 3. Create an R2 API token with **Object Read & Write**, scoped to that one bucket.
-4. Add an object lifecycle rule expiring the prefix `staging/` after 1 day.
+4. Add object lifecycle rules:
+   - prefix `staging/`, delete after 1 day (abandoned production uploads)
+   - prefix `dev/`, delete after 7 days (everything a local run writes, confirmed or
+     not, since local data is disposable)
 
 Uploads land under `staging/<household>/` and are copied to `receipts/<household>/`
 only once the server has checked their size and confirmed the bytes really are an

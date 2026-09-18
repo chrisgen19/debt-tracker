@@ -95,25 +95,25 @@ describe("staging keys", () => {
 
   it("promotes to the confirmed key for the same household and token", () => {
     const staged = stagingReceiptKey("", "house1", "tok1", "image/png");
-    assert.equal(promotedKey("", staged), receiptKey("", "house1", "tok1", "image/png"));
-    assert.equal(promotedKey("", staged), "receipts/house1/tok1.png");
+    assert.equal(promotedKey(staged), receiptKey("", "house1", "tok1", "image/png"));
+    assert.equal(promotedKey(staged), "receipts/house1/tok1.png");
   });
 
   it("never promotes into the staging prefix, so the upload URL cannot reach the final key", () => {
     const staged = stagingReceiptKey("", "h", "t", "image/webp");
-    assert.notEqual(staged, promotedKey("", staged));
-    assert.ok(!promotedKey("", staged).startsWith("staging/"));
+    assert.notEqual(staged, promotedKey(staged));
+    assert.ok(!promotedKey(staged).startsWith("staging/"));
   });
 
   it("only rewrites the leading prefix, so a household or token named like it survives", () => {
     const staged = stagingReceiptKey("", "staging", "staging", "image/jpeg");
     assert.equal(staged, "staging/staging/staging.jpg");
-    assert.equal(promotedKey("", staged), "receipts/staging/staging.jpg");
+    assert.equal(promotedKey(staged), "receipts/staging/staging.jpg");
   });
 
   it("leaves an already-promoted key alone, so a retried confirmation is idempotent", () => {
     const final = receiptKey("", "h", "t", "image/jpeg");
-    assert.equal(promotedKey("", final), final);
+    assert.equal(promotedKey(final), final);
   });
 });
 
@@ -134,8 +134,8 @@ describe("key prefix", () => {
   it("promotes within its own tree and never crosses into production", () => {
     const prefix = normalizeKeyPrefix("dev");
     const staged = stagingReceiptKey(prefix, "h", "t", "image/jpeg");
-    assert.equal(promotedKey(prefix, staged), "dev/receipts/h/t.jpg");
-    assert.ok(promotedKey(prefix, staged).startsWith("dev/"));
+    assert.equal(promotedKey(staged), "dev/receipts/h/t.jpg");
+    assert.ok(promotedKey(staged).startsWith("dev/"));
   });
 
   it("tolerates stray slashes so a trailing one in .env is not a silent second folder", () => {
@@ -144,10 +144,28 @@ describe("key prefix", () => {
     assert.equal(normalizeKeyPrefix("  dev  "), "dev/");
   });
 
-  it("refuses a prefix that could escape its tree or collide with the real one", () => {
-    for (const bad of ["../prod", "dev/sub", "DEV", "dev!", "receipts"]) {
-      if (bad === "receipts") continue; // legal characters; documented rather than blocked
+  it("refuses a prefix that could escape its tree", () => {
+    for (const bad of ["../prod", "dev/sub", "DEV", "dev!"]) {
       assert.throws(() => normalizeKeyPrefix(bad), /R2_KEY_PREFIX/);
     }
+  });
+
+  it("reserves the two names that would collide with the storage layout", () => {
+    // `staging` would file confirmed objects inside the tree the lifecycle rule
+    // expires, deleting live receipts out from under their rows.
+    assert.throws(() => normalizeKeyPrefix("staging"), /reserved/);
+    assert.throws(() => normalizeKeyPrefix("receipts"), /reserved/);
+  });
+
+  it("promotes using the tree the key was staged in, not the prefix configured now", () => {
+    const staged = stagingReceiptKey(normalizeKeyPrefix("dev"), "h", "t", "image/jpeg");
+    // Prefix has since changed, or been removed entirely: the key still knows.
+    assert.equal(promotedKey(staged), "dev/receipts/h/t.jpg");
+  });
+
+  it("matches whole segments, so a prefix that merely ends in the word is safe", () => {
+    const staged = stagingReceiptKey(normalizeKeyPrefix("mystaging"), "h", "t", "image/jpeg");
+    assert.equal(staged, "mystaging/staging/h/t.jpg");
+    assert.equal(promotedKey(staged), "mystaging/receipts/h/t.jpg");
   });
 });

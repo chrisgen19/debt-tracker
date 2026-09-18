@@ -137,9 +137,9 @@ async function confirmReceipt(receiptId: string | undefined, householdId: string
   // rest of its five minutes, so leaving a confirmed receipt at the key that URL writes
   // to would let the bytes be swapped after they were accepted, and a receipt that can
   // be changed after the fact is not evidence of anything.
-  // Derived from the prefix the key was built with, not the current setting, so a
-  // receipt staged before a prefix change still promotes into its own tree.
-  const key = promotedKey(storageKeyPrefix(), receipt.key);
+  // Read out of the stored key, so an upload reserved before R2_KEY_PREFIX changed
+  // still promotes into the tree it was staged in rather than being self-copied away.
+  const key = promotedKey(receipt.key);
   if (!(await copyReceiptObject(receipt.key, key))) await reject("That receipt could not be stored");
 
   // Guarded on PENDING so two concurrent confirmations cannot both claim the promotion.

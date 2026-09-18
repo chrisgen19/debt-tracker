@@ -76,8 +76,10 @@ export function receiptKey(prefix: string, householdId: string, token: string, c
   return `${prefix}${CONFIRMED_ROOT}${householdId}/${token}.${EXTENSIONS[contentType]}`;
 }
 
-const CONFIRMED_ROOT = "receipts/";
-const STAGING_ROOT = "staging/";
+const CONFIRMED_SEGMENT = "receipts";
+const STAGING_SEGMENT = "staging";
+const CONFIRMED_ROOT = `${CONFIRMED_SEGMENT}/`;
+const STAGING_ROOT = `${STAGING_SEGMENT}/`;
 
 /**
  * Where an upload lands before it has been checked.
@@ -99,15 +101,20 @@ export function stagingReceiptKey(prefix: string, householdId: string, token: st
 /**
  * The immutable key a staged object is promoted to.
  *
- * Anchored on the prefix rather than searching for the segment, so it swaps the one
- * `staging/` that this key was actually built with and cannot be fooled by the word
- * turning up anywhere else in the path.
+ * Read out of the key itself rather than from the current configuration. An upload
+ * reserved before `R2_KEY_PREFIX` changed still has to promote into the tree it was
+ * staged in; taking today's prefix would leave the key untouched and turn the copy
+ * that follows into a self-copy, destroying the object it was meant to preserve.
+ *
+ * Matched on whole path segments. Prefixes cannot contain a slash and the reserved
+ * names below keep `staging` out of that position, so exactly one segment can match.
  */
-export function promotedKey(prefix: string, stagingKey: string): string {
-  const staged = `${prefix}${STAGING_ROOT}`;
-  return stagingKey.startsWith(staged)
-    ? `${prefix}${CONFIRMED_ROOT}${stagingKey.slice(staged.length)}`
-    : stagingKey;
+export function promotedKey(stagingKey: string): string {
+  const parts = stagingKey.split("/");
+  const at = parts.indexOf(STAGING_SEGMENT);
+  if (at === -1) return stagingKey;
+  parts[at] = CONFIRMED_SEGMENT;
+  return parts.join("/");
 }
 
 /**
@@ -123,6 +130,13 @@ export function normalizeKeyPrefix(value: string | undefined): string {
   if (!trimmed) return "";
   if (!/^[a-z0-9][a-z0-9-]*$/.test(trimmed)) {
     throw new Error("R2_KEY_PREFIX must be lowercase letters, digits and dashes, for example \"dev\"");
+  }
+  // `staging` would put confirmed objects at `staging/receipts/...`, inside the tree the
+  // lifecycle rule expires after a day: the rows would survive while their images were
+  // deleted underneath them. It would also give `promotedKey` two candidate segments.
+  // `receipts` collides with the confirmed root for the same reason.
+  if (trimmed === STAGING_SEGMENT || trimmed === CONFIRMED_SEGMENT) {
+    throw new Error(`R2_KEY_PREFIX cannot be "${trimmed}": it is reserved for the storage layout`);
   }
   return `${trimmed}/`;
 }
