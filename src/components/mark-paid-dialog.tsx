@@ -33,7 +33,20 @@ type Props = {
 export function MarkPaidDialog({ ids, total, currency, pending, receiptsEnabled, onConfirm, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [receiptId, setReceiptId] = useState<string | null>(null);
-  useSheetDialog(dialogRef, ids.length > 0, onClose);
+  const open = ids.length > 0;
+
+  // Cleared as the dialog opens, not as it closes. Dismissing with Esc or a click
+  // outside skips `confirm`, so without this a receipt attached and then abandoned
+  // would still be sitting there on the next open, ready to be filed against an
+  // entirely different set of entries. Resetting on the way in also leaves the
+  // thumbnail in place through the exit transition.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) setReceiptId(null);
+  }
+
+  useSheetDialog(dialogRef, open, onClose);
 
   const count = ids.length;
   const heading = count === 1 ? "Mark this entry paid" : `Mark ${count} entries paid`;

@@ -26,17 +26,23 @@ type Props = {
 
 export function ReceiptField({ receiptId, onChange, disabled, label = "Attach a receipt" }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [preview, setPreview] = useState<string | null>(null);
+  // The thumbnail is a blob URL for the local file, so it needs no round trip and is
+  // there before the upload finishes. Tagged with the receipt it belongs to: `receiptId`
+  // is the parent's, so a parent that clears it must clear this too, and deriving that
+  // rather than syncing it in an effect means there is no window where the field shows
+  // a thumbnail for a receipt its owner has already discarded.
+  const [attached, setAttached] = useState<{ id: string; preview: string } | null>(null);
+  const shown = attached && attached.id === receiptId ? attached : null;
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
-  // The preview is a blob URL for the local file, so it costs no round trip and works
-  // before the upload has finished. Revoked on unmount to avoid holding the bytes.
-  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+  useEffect(() => () => { if (attached) URL.revokeObjectURL(attached.preview); }, [attached]);
+
+  // The native input keeps its own value, which React cannot derive away. Left set, it
+  // stops the very same file being picked again after a clear.
+  useEffect(() => { if (!shown && inputRef.current) inputRef.current.value = ""; }, [shown]);
 
   function reset() {
-    if (preview) URL.revokeObjectURL(preview);
-    setPreview(null);
     onChange(null);
     if (inputRef.current) inputRef.current.value = "";
   }
@@ -61,8 +67,7 @@ export function ReceiptField({ receiptId, onChange, disabled, label = "Attach a 
       });
       if (!response.ok) { setError("The upload did not go through. Check your connection and try again."); return; }
 
-      if (preview) URL.revokeObjectURL(preview);
-      setPreview(URL.createObjectURL(blob));
+      setAttached({ id: ticket.receiptId, preview: URL.createObjectURL(blob) });
       onChange(ticket.receiptId);
     } catch {
       setError("The upload did not go through. Check your connection and try again.");
@@ -84,10 +89,10 @@ export function ReceiptField({ receiptId, onChange, disabled, label = "Attach a 
         onChange={(event) => { const file = event.target.files?.[0]; if (file) void pick(file); }}
       />
 
-      {receiptId && preview ? (
+      {shown ? (
         <div className="flex items-center gap-3 rounded-2xl border border-border bg-secondary/40 p-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element -- a local blob URL, not a remote asset for next/image to optimise */}
-          <img src={preview} alt="Receipt preview" className="size-14 shrink-0 rounded-xl object-cover" />
+          <img src={shown.preview} alt="Receipt preview" className="size-14 shrink-0 rounded-xl object-cover" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold">Receipt attached</p>
             <p className="text-xs text-muted-foreground">Saved with this entry</p>
