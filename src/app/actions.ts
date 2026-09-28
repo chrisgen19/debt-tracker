@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { normalizeCategories } from "@/lib/categories";
+import { categoriesIncluding, normalizeCategories } from "@/lib/categories";
 import { prisma } from "@/lib/prisma";
 import { copyReceiptObject, deleteReceiptObject, presignReceiptPut, receiptObjectPrefix, receiptObjectSize } from "@/lib/r2";
 import { IMAGE_SNIFF_BYTES, MAX_RECEIPT_BYTES, promotedKey, sniffImageType, stagingReceiptKey, validateReceiptUpload } from "@/lib/receipts";
@@ -18,7 +18,10 @@ type UploadTicket = { ok: true; receiptId: string; uploadUrl: string } | { ok: f
  *  the only one entitled to move it back if the work it was for falls through. */
 type ConfirmedReceipt = { id: string; promoted: boolean };
 
-const debtSchema = z.object({
+/// What an entry *is*, and so what an edit may change. Status and the borrow receipt
+/// are only set at creation: afterwards status moves through setDebtStatus, so every
+/// transition lands in the payment log instead of slipping past it inside an edit.
+const debtFieldsSchema = z.object({
   itemName: z.string().trim().min(2, "Add a descriptive item name").max(100),
   amount: z.coerce.number().positive("Amount must be greater than zero").max(99999999),
   category: z.string().trim().min(1).max(40),
@@ -27,9 +30,14 @@ const debtSchema = z.object({
   borrowerId: z.string().min(1),
   incurredAt: z.string().min(1),
   notes: z.string().trim().max(1000).optional(),
+});
+
+const debtSchema = debtFieldsSchema.extend({
   status: z.enum(["DEBT", "PAID"]),
   borrowReceiptId: z.string().min(1).optional(),
 });
+
+type DebtFields = z.infer<typeof debtFieldsSchema>;
 
 const uploadSchema = z.object({
   contentType: z.string().min(1),
@@ -181,21 +189,37 @@ async function discardReceipt(confirmed: ConfirmedReceipt | null, householdId: s
   if (count > 0) await deleteReceiptObject(receipt.key);
 }
 
+/**
+ * The checks an entry's fields need beyond their shape: both people belong to the
+ * household, the category is one it offers, and the date parses. Shared by create and
+ * edit so the two cannot drift.
+ *
+ * `keepCategory` is the category an edited entry already has. It is accepted even when
+ * it has since been removed from the settings, so fixing a typo in the item name does
+ * not force the entry into a different category.
+ */
+async function checkDebtFields(householdId: string, data: DebtFields, keepCategory?: string): Promise<{ ok: true; incurredAt: Date } | { ok: false; error: string }> {
+  if (data.lenderId === data.borrowerId) return { ok: false, error: "Lender and borrower must be different people" };
+  const members = await prisma.user.count({ where: { id: { in: [data.lenderId, data.borrowerId] }, householdId } });
+  if (members !== 2) return { ok: false, error: "Both people must belong to your household" };
+  const household = await prisma.household.findUnique({ where: { id: householdId }, select: { categoryConfig: true } });
+  const categories = categoriesIncluding(normalizeCategories(household?.categoryConfig), keepCategory);
+  if (!categories.some((category) => category.name === data.category)) {
+    return { ok: false, error: "Choose a category from your household settings" };
+  }
+  const incurredAt = new Date(data.incurredAt);
+  if (Number.isNaN(incurredAt.getTime())) return { ok: false, error: "Choose a valid date and time" };
+  return { ok: true, incurredAt };
+}
+
 export async function createDebt(input: unknown): Promise<ActionResult> {
   try {
     const user = await actor();
     const parsed = debtSchema.safeParse(input);
     if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Check the form" };
-    if (parsed.data.lenderId === parsed.data.borrowerId) return { ok: false, error: "Lender and borrower must be different people" };
-    const members = await prisma.user.count({ where: { id: { in: [parsed.data.lenderId, parsed.data.borrowerId] }, householdId: user.householdId } });
-    if (members !== 2) return { ok: false, error: "Both people must belong to your household" };
-    const household = await prisma.household.findUnique({ where: { id: user.householdId! }, select: { categoryConfig: true } });
-    const categories = normalizeCategories(household?.categoryConfig);
-    if (!categories.some((category) => category.name === parsed.data.category)) {
-      return { ok: false, error: "Choose a category from your household settings" };
-    }
-    const incurredAt = new Date(parsed.data.incurredAt);
-    if (Number.isNaN(incurredAt.getTime())) return { ok: false, error: "Choose a valid date and time" };
+    const checked = await checkDebtFields(user.householdId!, parsed.data);
+    if (!checked.ok) return checked;
+    const { incurredAt } = checked;
     const settledNow = parsed.data.status === "PAID";
     const paidAt = settledNow ? new Date() : null;
     const confirmed = await confirmReceipt(parsed.data.borrowReceiptId, user.householdId!);
@@ -222,6 +246,39 @@ export async function createDebt(input: unknown): Promise<ActionResult> {
     revalidatePath("/dashboard");
     return { ok: true, message: "Debt recorded" };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not save this debt" }; }
+}
+
+/**
+ * Correct an entry's details: what it was, how much, who owes whom, when, and the note.
+ *
+ * Works the same on open and paid entries. Status is not part of it (see
+ * `debtFieldsSchema`), and a paid entry's PaymentEvent keeps the amount it was settled
+ * at: the log records what happened then, and every total is summed from `Debt.amount`,
+ * never from the log, so the balances follow the edit.
+ */
+export async function updateDebt(id: string, input: unknown): Promise<ActionResult> {
+  try {
+    const user = await actor();
+    const parsed = debtFieldsSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Check the form" };
+    const debt = await prisma.debt.findFirst({ where: { id, householdId: user.householdId! }, select: { category: true } });
+    if (!debt) return { ok: false, error: "Debt not found" };
+    const checked = await checkDebtFields(user.householdId!, parsed.data, debt.category);
+    if (!checked.ok) return checked;
+    // The householdId in the filter is the authorization guard, as in deleteDebts. A
+    // count of zero means the entry was deleted between the read above and this write.
+    const { count } = await prisma.debt.updateMany({
+      where: { id, householdId: user.householdId! },
+      data: {
+        itemName: parsed.data.itemName, amount: parsed.data.amount, category: parsed.data.category,
+        paymentMethod: parsed.data.paymentMethod, lenderId: parsed.data.lenderId, borrowerId: parsed.data.borrowerId,
+        incurredAt: checked.incurredAt, notes: parsed.data.notes || null,
+      },
+    });
+    if (!count) return { ok: false, error: "Debt not found" };
+    revalidatePath("/dashboard");
+    return { ok: true, message: "Entry updated" };
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update this entry" }; }
 }
 
 export async function setDebtStatus(id: string, status: "DEBT" | "PAID", receiptId?: string): Promise<ActionResult> {

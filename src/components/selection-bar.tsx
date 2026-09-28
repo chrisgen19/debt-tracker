@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ListChecks, Trash2, Undo2, X } from "lucide-react";
+import { Check, ListChecks, Pencil, Trash2, Undo2, X } from "lucide-react";
 import type { SelectionSummary } from "@/lib/selection";
 import { formatMoney } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
  * own height in the flow, so the list can always be scrolled past it, whatever
  * the bar grows to at that width.
  */
-export function SelectionBar({ selection, currency, settled, pending, allSelected, onSelectAll, onMarkPaid, onMarkUnpaid, onDelete, onClear }: {
+export function SelectionBar({ selection, currency, settled, pending, allSelected, onSelectAll, onMarkPaid, onMarkUnpaid, onEdit, onDelete, onClear }: {
   selection: SelectionSummary;
   currency: string;
   /** Every row in a paid view is settled, so its totals are payments, not debts. */
@@ -24,6 +24,9 @@ export function SelectionBar({ selection, currency, settled, pending, allSelecte
   onSelectAll: () => void;
   onMarkPaid: () => void;
   onMarkUnpaid: () => void;
+  /** Present only while exactly one entry is selected. On phones this is the way in
+   *  to editing, since the rows are too narrow to carry their own edit button. */
+  onEdit?: () => void;
   onDelete: () => void;
   onClear: () => void;
 }) {
@@ -73,12 +76,18 @@ export function SelectionBar({ selection, currency, settled, pending, allSelecte
               <ActionLabel short="Unpaid" full="Mark unpaid" count={selection.toUnpay.length} />
             </Button>
           )}
+          {onEdit && (
+            <Button size="sm" variant="outline" disabled={pending} onClick={onEdit} className="w-full sm:w-auto">
+              <Pencil className="size-4" />Edit
+            </Button>
+          )}
           {/* With both mark actions filling the first row, Delete would sit alone
               in half of the second. Let it span instead of leaving a gap. */}
           <Button size="sm" variant="destructive" disabled={pending} onClick={onDelete} className={`w-full sm:w-auto ${bothStatuses ? "col-span-2" : ""}`}>
             <Trash2 className="size-4" />Delete ({selection.count})
           </Button>
-          <Button size="sm" variant="ghost" aria-label="Cancel selection" disabled={pending} onClick={onClear} className="col-span-2 w-full sm:w-auto sm:px-2">
+          {/* A single selection is mark + Edit over Delete + Cancel: a tidy two by two. */}
+          <Button size="sm" variant="ghost" aria-label="Cancel selection" disabled={pending} onClick={onClear} className={`w-full sm:w-auto sm:px-2 ${onEdit ? "" : "col-span-2"}`}>
             <X className="size-4" />
             <span className="sm:hidden">Cancel</span>
           </Button>

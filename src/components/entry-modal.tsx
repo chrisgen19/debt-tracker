@@ -8,12 +8,18 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ReceiptField } from "@/components/receipt-field";
-import { sanitizeAmount } from "@/lib/amount";
-import type { CategoryOption } from "@/lib/categories";
+import { sanitizeAmount, toAmountInput } from "@/lib/amount";
+import { categoriesIncluding, type CategoryOption } from "@/lib/categories";
 import { currencySymbol, initials } from "@/lib/utils";
 
 type Person = { id: string; name: string };
 type Direction = "BORROWED" | "LENT";
+
+/** An existing entry to prefill the sheet with. */
+type EditableEntry = {
+  itemName: string; amount: number; category: string; paymentMethod: "CASH" | "CREDIT_CARD";
+  notes: string | null; incurredAt: string; status: "DEBT" | "PAID"; borrower: { id: string };
+};
 
 type Props = {
   open: boolean;
@@ -24,6 +30,10 @@ type Props = {
   pending: boolean;
   /** False when R2 is unconfigured: the receipt affordance is hidden entirely. */
   receiptsEnabled: boolean;
+  /** Edits this entry instead of creating one. Status and the receipt are left out of
+   *  the sheet in this mode: status has its own mark paid/unpaid controls, which log
+   *  each transition, and the receipt is attached when the entry is first logged. */
+  entry?: EditableEntry;
   onClose: () => void;
   onSubmit: (input: Record<string, unknown>) => void;
 };
@@ -56,28 +66,34 @@ function toLocalInput(date: Date) {
   return local.toISOString().slice(0, 16);
 }
 
-export function EntryModal({ open, currentUser, partner, currency, categories, pending, receiptsEnabled, onClose, onSubmit }: Props) {
+export function EntryModal({ open, currentUser, partner, currency, categories, pending, receiptsEnabled, entry, onClose, onSubmit }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [direction, setDirection] = useState<Direction>("BORROWED");
-  const [amount, setAmount] = useState("");
-  const [itemName, setItemName] = useState("");
-  const [category, setCategory] = useState<string>(categories[0]?.name ?? "Other");
+  const editing = Boolean(entry);
+  // Seeded once per mount: the parent remounts the sheet (via `key`) for every open,
+  // so each edit starts from the entry as it is now rather than from a stale draft.
+  const [direction, setDirection] = useState<Direction>(entry && entry.borrower.id !== currentUser.id ? "LENT" : "BORROWED");
+  const [amount, setAmount] = useState(entry ? toAmountInput(entry.amount) : "");
+  const [itemName, setItemName] = useState(entry?.itemName ?? "");
+  const [category, setCategory] = useState<string>(entry?.category ?? categories[0]?.name ?? "Other");
   const [selectedQuickPick, setSelectedQuickPick] = useState<string | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CREDIT_CARD">("CREDIT_CARD");
-  const [incurredAt, setIncurredAt] = useState(() => toLocalInput(new Date()));
+  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CREDIT_CARD">(entry?.paymentMethod ?? "CREDIT_CARD");
+  const [incurredAt, setIncurredAt] = useState(() => toLocalInput(entry ? new Date(entry.incurredAt) : new Date()));
   const [settled, setSettled] = useState(false);
-  const [notes, setNotes] = useState("");
-  const [notesOpen, setNotesOpen] = useState(false);
+  const [notes, setNotes] = useState(entry?.notes ?? "");
+  // An existing note starts expanded, and then must not grab focus from the amount.
+  const notesStartOpen = Boolean(entry?.notes);
+  const [notesOpen, setNotesOpen] = useState(notesStartOpen);
   const [receiptId, setReceiptId] = useState<string | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptUploading, setReceiptUploading] = useState(false);
 
   const symbol = useMemo(() => currencySymbol(currency), [currency]);
+  const options = useMemo(() => categoriesIncluding(categories, entry?.category), [categories, entry?.category]);
   const numericAmount = Number(amount || 0);
   // `receiptUploading` is in here so a fast save cannot outrun the upload and file
   // the entry with no receipt after the person picked one.
   const canSave = numericAmount > 0 && itemName.trim().length >= 2 && !pending && !receiptUploading;
-  const active = categories.find((entry) => entry.name === category) ?? categories[0];
+  const active = options.find((option) => option.name === category) ?? options[0];
 
   // Drive the native dialog from the `open` prop. showModal() gives us the top layer,
   // focus trapping and Esc handling for free, and keeping the node mounted lets the
@@ -119,10 +135,9 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
       paymentMethod,
       incurredAt,
       notes: notes.trim() || undefined,
-      status: settled ? "PAID" : "DEBT",
       lenderId: direction === "BORROWED" ? partner.id : currentUser.id,
       borrowerId: direction === "BORROWED" ? currentUser.id : partner.id,
-      borrowReceiptId: receiptId ?? undefined,
+      ...(editing ? {} : { status: settled ? "PAID" : "DEBT", borrowReceiptId: receiptId ?? undefined }),
     });
   }
 
@@ -142,14 +157,14 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
         <Hero
           currentUser={currentUser} partner={partner} direction={direction} onDirection={setDirection}
           amount={amount} onAmount={(value) => setAmount(sanitizeAmount(value))}
-          symbol={symbol} settled={settled} onClose={onClose}
+          symbol={symbol} settled={editing ? entry?.status === "PAID" : settled} editing={editing} onClose={onClose}
         />
 
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-6 sm:px-7">
           <section className="rounded-3xl border border-border bg-secondary/20 p-4 sm:p-5">
             <StepLegend step="1" title="Choose a category">This sets the quick picks shown next.</StepLegend>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-              {categories.map(({ name }, index) => {
+              {options.map(({ name }, index) => {
                 const { icon: Icon, tint } = categoryVisual(name, index);
                 const selected = name === category;
                 return (
@@ -228,22 +243,24 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
           </div>
 
           <section className="space-y-3">
-            <button
-              type="button" role="switch" aria-checked={settled} onClick={() => setSettled((value) => !value)}
-              className={`flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition ${settled ? "border-primary/40 bg-[#eef4ed]" : "border-border hover:bg-secondary/40"}`}
-            >
-              <span className={`grid size-6 shrink-0 place-items-center rounded-lg border transition ${settled ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background"}`}>
-                {settled && <Check className="size-4" />}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-sm font-bold">Already settled</span>
-                <span className="block text-xs text-muted-foreground">Log it for the record without changing the balance</span>
-              </span>
-            </button>
+            {!editing && (
+              <button
+                type="button" role="switch" aria-checked={settled} onClick={() => setSettled((value) => !value)}
+                className={`flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition ${settled ? "border-primary/40 bg-[#eef4ed]" : "border-border hover:bg-secondary/40"}`}
+              >
+                <span className={`grid size-6 shrink-0 place-items-center rounded-lg border transition ${settled ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background"}`}>
+                  {settled && <Check className="size-4" />}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-bold">Already settled</span>
+                  <span className="block text-xs text-muted-foreground">Log it for the record without changing the balance</span>
+                </span>
+              </button>
+            )}
 
             {notesOpen ? (
               <textarea
-                autoFocus value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={1000}
+                autoFocus={!notesStartOpen} value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={1000}
                 placeholder="Receipt number, who else was there, anything to remember…"
                 className="min-h-20 w-full resize-none rounded-2xl border border-input bg-background px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/10"
               />
@@ -256,7 +273,7 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
 
             {/* Same collapsed-until-wanted idiom as the note above. Deliberately not
                 part of `canSave`: proof is optional, and a cash handover has none. */}
-            {!receiptsEnabled ? null : receiptOpen ? (
+            {!receiptsEnabled || editing ? null : receiptOpen ? (
               <ReceiptField receiptId={receiptId} onChange={setReceiptId} onUploadingChange={setReceiptUploading} disabled={pending} />
             ) : (
               <button type="button" onClick={() => setReceiptOpen(true)} className="flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-primary">
@@ -271,7 +288,7 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
           <Button type="button" variant="ghost" size="lg" onClick={onClose} className="px-4">Cancel</Button>
           <Button type="submit" size="lg" disabled={!canSave} className="flex-1">
             {pending ? <LoaderCircle className="size-4 animate-spin" /> : <ReceiptText className="size-4" />}
-            {pending ? "Saving" : receiptUploading ? "Uploading receipt" : "Save entry"}
+            {pending ? "Saving" : receiptUploading ? "Uploading receipt" : editing ? "Save changes" : "Save entry"}
           </Button>
         </footer>
       </form>
@@ -279,9 +296,9 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
   );
 }
 
-function Hero({ currentUser, partner, direction, onDirection, amount, onAmount, symbol, settled, onClose }: {
+function Hero({ currentUser, partner, direction, onDirection, amount, onAmount, symbol, settled, editing, onClose }: {
   currentUser: Person; partner: Person; direction: Direction; onDirection: (value: Direction) => void;
-  amount: string; onAmount: (value: string) => void; symbol: string; settled: boolean; onClose: () => void;
+  amount: string; onAmount: (value: string) => void; symbol: string; settled: boolean; editing: boolean; onClose: () => void;
 }) {
   const borrowed = direction === "BORROWED";
   const you = currentUser.name.split(" ")[0];
@@ -292,7 +309,7 @@ function Hero({ currentUser, partner, direction, onDirection, amount, onAmount, 
     <div className="relative shrink-0 overflow-hidden bg-[#244b37] px-5 pb-6 pt-5 text-white sm:px-7">
       <div className="relative flex items-start justify-between">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[.18em] text-white/55">New entry</p>
+          <p className="text-[11px] font-bold uppercase tracking-[.18em] text-white/55">{editing ? "Edit entry" : "New entry"}</p>
           <h2 id="entry-title" className="mt-0.5 font-display text-xl font-semibold">Who borrowed?</h2>
         </div>
         <button type="button" onClick={onClose} aria-label="Close" className="grid size-9 place-items-center rounded-full bg-white/10 transition hover:bg-white/20">
@@ -336,7 +353,7 @@ function Hero({ currentUser, partner, direction, onDirection, amount, onAmount, 
       <p className="relative mt-3 flex items-center justify-center gap-1.5 text-center text-sm text-white/70">
         <ArrowLeftRight className="size-3.5 shrink-0 text-[#f2d68d]" aria-hidden />
         {settled
-          ? "Settled on the spot, balance stays put"
+          ? editing ? "Already paid, and stays paid" : "Settled on the spot, balance stays put"
           : borrowed ? <>You&rsquo;ll owe <strong className="font-semibold text-white">{them}</strong></> : <><strong className="font-semibold text-white">{them}</strong> will owe you</>}
       </p>
     </div>

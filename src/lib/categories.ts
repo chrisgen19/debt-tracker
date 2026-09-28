@@ -36,3 +36,16 @@ export function normalizeCategories(value: unknown): CategoryOption[] {
     ? categories
     : DEFAULT_CATEGORIES.map((category) => ({ ...category, ideas: [...category.ideas] }));
 }
+
+/**
+ * The household's categories, plus `current` when it is no longer among them.
+ *
+ * An entry filed under a category that was later removed from the settings still has
+ * to show as selected when it is edited, and saving it unchanged must not be rejected
+ * just because its category has since gone. It carries no quick picks: there is
+ * nothing to suggest for a category the household stopped offering.
+ */
+export function categoriesIncluding(categories: CategoryOption[], current?: string): CategoryOption[] {
+  if (!current || categories.some((category) => category.name === current)) return categories;
+  return [...categories, { name: current, ideas: [] }];
+}
