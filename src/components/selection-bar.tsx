@@ -76,17 +76,17 @@ export function SelectionBar({ selection, currency, settled, pending, allSelecte
               <ActionLabel short="Unpaid" full="Mark unpaid" count={selection.toUnpay.length} />
             </Button>
           )}
-          {onEdit && (
-            <Button size="sm" variant="outline" disabled={pending} onClick={onEdit} className="w-full sm:w-auto">
-              <Pencil className="size-4" />Edit
-            </Button>
-          )}
           {/* With both mark actions filling the first row, Delete would sit alone
               in half of the second. Let it span instead of leaving a gap. */}
           <Button size="sm" variant="destructive" disabled={pending} onClick={onDelete} className={`w-full sm:w-auto ${bothStatuses ? "col-span-2" : ""}`}>
             <Trash2 className="size-4" />Delete ({selection.count})
           </Button>
-          {/* A single selection is mark + Edit over Delete + Cancel: a tidy two by two. */}
+          {onEdit && (
+            <Button size="sm" variant="outline" disabled={pending} onClick={onEdit} className="w-full sm:w-auto">
+              <Pencil className="size-4" />Edit
+            </Button>
+          )}
+          {/* A single selection is mark + Delete over Edit + Cancel: a tidy two by two. */}
           <Button size="sm" variant="ghost" aria-label="Cancel selection" disabled={pending} onClick={onClear} className={`w-full sm:w-auto sm:px-2 ${onEdit ? "" : "col-span-2"}`}>
             <X className="size-4" />
             <span className="sm:hidden">Cancel</span>
