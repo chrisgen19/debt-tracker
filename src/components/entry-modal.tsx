@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ReceiptField } from "@/components/receipt-field";
 import { sanitizeAmount, toAmountInput } from "@/lib/amount";
 import { categoriesIncluding, type CategoryOption } from "@/lib/categories";
+import { toInstant, toLocalInput } from "@/lib/datetime";
 import { currencySymbol, initials } from "@/lib/utils";
 
 type Person = { id: string; name: string };
@@ -57,13 +58,6 @@ const CUSTOM_VISUALS = [
 
 function categoryVisual(name: string, index: number) {
   return CATEGORY_VISUALS[name as keyof typeof CATEGORY_VISUALS] ?? CUSTOM_VISUALS[index % CUSTOM_VISUALS.length];
-}
-
-/** datetime-local wants a local wall-clock string, not the UTC that toISOString gives back. */
-function toLocalInput(date: Date) {
-  const local = new Date(date);
-  local.setMinutes(local.getMinutes() - local.getTimezoneOffset());
-  return local.toISOString().slice(0, 16);
 }
 
 export function EntryModal({ open, currentUser, partner, currency, categories, pending, receiptsEnabled, entry, onClose, onSubmit }: Props) {
@@ -133,7 +127,8 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
       amount: numericAmount,
       category,
       paymentMethod,
-      incurredAt,
+      // Pinned to an instant here so the server never reads it in its own timezone.
+      incurredAt: toInstant(incurredAt),
       notes: notes.trim() || undefined,
       lenderId: direction === "BORROWED" ? partner.id : currentUser.id,
       borrowerId: direction === "BORROWED" ? currentUser.id : partner.id,
