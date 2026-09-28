@@ -34,3 +34,12 @@ export function sanitizeAmount(raw: string, decimalSeparator = localeDecimalSepa
   const fraction = clean.slice(decimalIndex + 1).replace(/\D/g, "").slice(0, 2);
   return `${whole}.${fraction}`;
 }
+
+/**
+ * A stored amount as the entry form's amount field shows it when an entry is edited.
+ * Whole amounts stay bare, like a freshly typed "250"; anything with cents keeps both
+ * digits, so ₱1,275.50 reads "1275.50" rather than the "1275.5" that String() gives.
+ */
+export function toAmountInput(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}

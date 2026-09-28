@@ -7,11 +7,11 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } f
 import {
   ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowRight, Banknote, CalendarDays, Check, CheckCircle2,
   ChevronDown, CreditCard, Ellipsis, HandCoins, Home, LayoutDashboard, LogOut, Paperclip,
-  Plus, ReceiptText, Search, Settings2, Share2, Trash2, UserPlus, Users, WalletCards, X,
+  Pencil, Plus, ReceiptText, Search, Settings2, Share2, Trash2, UserPlus, Users, WalletCards, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
-import { createDebt, deleteDebt, deleteDebts, joinHousehold, setDebtStatus, setDebtStatusBulk, updateCategoryConfig, updateHousehold } from "@/app/actions";
+import { createDebt, deleteDebt, deleteDebts, joinHousehold, setDebtStatus, setDebtStatusBulk, updateCategoryConfig, updateDebt, updateHousehold } from "@/app/actions";
 import { filterLedgerEntries, isPaidMode, type DirectionFilter, type LedgerMode, type LedgerStatusFilter } from "@/lib/ledger";
 import { clearInstalledAppState } from "@/lib/pwa";
 import { setSelectionFor, summarizeSelection } from "@/lib/selection";
@@ -86,12 +86,17 @@ export function DashboardClient(props: Props) {
   // rather than an effect means the sheet is never briefly visible as closed.
   const [entryOpen, setEntryOpen] = useState(openEntryOnLoad);
   const [entrySession, setEntrySession] = useState(0);
+  // The entry the sheet is editing, or null when it is logging a new one. Left in place
+  // on close so the sheet keeps its contents through the exit transition.
+  const [editing, setEditing] = useState<Debt | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const currency = household.currency;
   const partner = members.find((member) => member.id !== currentUser.id);
 
-  function openEntry() { setEntrySession((session) => session + 1); setEntryOpen(true); }
+  // Bumping the session remounts the sheet, so each open starts from a clean draft.
+  function openEntry() { setEditing(null); setEntrySession((session) => session + 1); setEntryOpen(true); }
+  function openEdit(debt: Debt) { setEditing(debt); setEntrySession((session) => session + 1); setEntryOpen(true); }
   function goToMonth(key: string) { router.push(ledgerUrl(ledgerMode, key)); }
   function showLedger(mode: LedgerMode, scroll = false) {
     router.push(ledgerUrl(mode, month.key), { scroll: false });
@@ -163,6 +168,7 @@ export function DashboardClient(props: Props) {
           receiptsEnabled={receiptsEnabled}
           onModeChange={showLedger}
           onAdd={openEntry}
+          onEdit={openEdit}
           run={run}
         />
       </main>
@@ -170,7 +176,18 @@ export function DashboardClient(props: Props) {
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pl-[calc(env(safe-area-inset-left)+1.25rem)] pr-[calc(env(safe-area-inset-right)+1.25rem)] pt-3 backdrop-blur md:hidden"><div className="mx-auto flex max-w-sm items-center justify-around"><button className="flex flex-col items-center gap-1 text-[11px] font-bold text-primary"><Home className="size-5" />Home</button><button disabled={!partner} onClick={openEntry} className="-mt-8 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg disabled:opacity-50"><Plus className="size-6" /></button><button onClick={() => setSettingsOpen(true)} className="flex flex-col items-center gap-1 text-[11px] font-bold text-muted-foreground"><Settings2 className="size-5" />Settings</button></div></div>
 
       <AppBadge count={openDebtCount} />
-      {partner && <EntryModal key={entrySession} open={entryOpen} currentUser={currentUser} partner={partner} currency={currency} categories={categories} pending={pending} receiptsEnabled={receiptsEnabled} onClose={() => setEntryOpen(false)} onSubmit={(input) => run(async () => { const result = await createDebt(input); if (result.ok) setEntryOpen(false); return result; })} />}
+      {partner && (
+        <EntryModal
+          key={entrySession} open={entryOpen} currentUser={currentUser} partner={partner} currency={currency}
+          categories={categories} pending={pending} receiptsEnabled={receiptsEnabled} entry={editing ?? undefined}
+          onClose={() => setEntryOpen(false)}
+          onSubmit={(input) => run(async () => {
+            const result = editing ? await updateDebt(editing.id, input) : await createDebt(input);
+            if (result.ok) setEntryOpen(false);
+            return result;
+          })}
+        />
+      )}
       {settingsOpen && <SettingsPanel currentUser={currentUser} household={household} members={members} categories={categories} pending={pending} onClose={() => setSettingsOpen(false)} run={run} />}
     </div>
   );
@@ -183,7 +200,7 @@ function SummaryCard({ label, value, currency, icon: Icon, tone, detail, actionL
   return <Card className="h-full p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p>{onDetailClick ? <button type="button" onClick={onDetailClick} className="mt-3 text-left text-xs font-bold text-primary hover:underline">{detail} · {actionLabel}</button> : <p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p>}</Card>;
 }
 
-function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, currentUser, currency, summary, pending, canAdd, receiptsEnabled, onModeChange, onAdd, run }: {
+function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, currentUser, currency, summary, pending, canAdd, receiptsEnabled, onModeChange, onAdd, onEdit, run }: {
   mode: LedgerMode;
   month: Props["month"];
   monthlyDebts: Debt[];
@@ -200,6 +217,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
   receiptsEnabled: boolean;
   onModeChange: (mode: LedgerMode) => void;
   onAdd: () => void;
+  onEdit: (debt: Debt) => void;
   run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void;
 }) {
   const [search, setSearch] = useState("");
@@ -471,6 +489,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
                       receiptsEnabled={receiptsEnabled}
                       onToggleSelected={toggleSelected}
                       onMarkPaid={() => askToSettle([debt.id], debt.amount)}
+                      onEdit={() => onEdit(debt)}
                       onViewReceipt={(id, title) => setViewing({ id, title })}
                       run={run}
                     />
@@ -500,6 +519,14 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
           entries.filter((debt) => selection.toPay.includes(debt.id)).reduce((sum, debt) => sum + debt.amount, 0),
         )}
         onMarkUnpaid={() => runBulk(() => setDebtStatusBulk(selection.toUnpay, "DEBT"))}
+        // The selection has done its job once it names the entry to edit, so it is
+        // cleared rather than left armed under the sheet.
+        onEdit={selection.count === 1 ? () => {
+          const debt = entries.find((entry) => entry.id === selection.ids[0]);
+          if (!debt) return;
+          clearSelection();
+          onEdit(debt);
+        } : undefined}
         onDelete={() => {
           if (window.confirm(`Delete ${selection.count === 1 ? "this entry" : `these ${selection.count} entries`}? This cannot be undone.`)) {
             runBulk(() => deleteDebts(selection.ids));
@@ -551,7 +578,7 @@ function BalanceCard({ className, currentUser, partner, summary, currency }: { c
   return <Card className={`relative overflow-hidden bg-[#244b37] text-white ${className ?? ""}`}><div className="absolute -right-16 -top-16 size-52 rounded-full border-[36px] border-white/5"/><CardHeader className="relative"><p className="text-xs font-bold uppercase tracking-[.18em] text-white/60">All-time balance</p><CardTitle className="text-white">Between you two</CardTitle></CardHeader><CardContent className="relative"><div className="mb-6 flex items-center"><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#dcebdc] font-bold text-primary">{initials(currentUser.name)}</div><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><HandCoins className="size-5 text-[#f2d68d]"/><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#f4dfd5] font-bold text-[#9e4f37]">{partner ? initials(partner.name) : "?"}</div></div><p className="text-sm text-white/65">{!partner ? "Invite your partner to calculate your balance." : net > 0 ? `${partner.name.split(" ")[0]} owes you` : net < 0 ? `You owe ${partner.name.split(" ")[0]}` : "You’re perfectly even"}</p><p className="mt-1 font-display text-4xl font-semibold">{formatMoney(Math.abs(net), currency)}</p><div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-[#f2d68d]" style={{ width: `${Math.min(100, Math.max(8, Math.abs(net) / Math.max(summary.allTimeOwedToYou + summary.allTimeYouOwe, 1) * 100))}%` }} /></div></CardContent></Card>;
 }
 
-function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isSelected, receiptsEnabled, onToggleSelected, onMarkPaid, onViewReceipt, run }: {
+function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isSelected, receiptsEnabled, onToggleSelected, onMarkPaid, onEdit, onViewReceipt, run }: {
   debt: Debt;
   settled: boolean;
   currentUser: Member;
@@ -562,6 +589,7 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
   receiptsEnabled: boolean;
   onToggleSelected: (id: string) => void;
   onMarkPaid: () => void;
+  onEdit: () => void;
   onViewReceipt: (receiptId: string, title: string) => void;
   run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => void;
 }) {
@@ -651,6 +679,16 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
             className="grid size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dcebdc] hover:text-primary"
           >
             <Check className="size-4" />
+          </button>
+          {/* Hidden on phones like Delete: the row cannot spare the width there, so
+              editing goes through the selection bar instead (tap the row, then Edit). */}
+          <button
+            disabled={pending}
+            aria-label="Edit entry"
+            onClick={(event) => { event.stopPropagation(); onEdit(); }}
+            className="hidden size-9 place-items-center rounded-xl text-muted-foreground hover:bg-[#dfeaec] hover:text-[#37616c] sm:grid"
+          >
+            <Pencil className="size-4" />
           </button>
           <button
             disabled={pending}

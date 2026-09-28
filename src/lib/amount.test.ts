@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { sanitizeAmount } from "./amount";
+import { sanitizeAmount, toAmountInput } from "./amount";
 
 describe("sanitizeAmount", () => {
   it("preserves comma decimals on comma-decimal devices", () => {
@@ -28,5 +28,16 @@ describe("sanitizeAmount", () => {
 
   it("keeps the existing digit and precision limits", () => {
     assert.equal(sanitizeAmount("12345678901.999", "."), "123456789.99");
+  });
+});
+
+describe("toAmountInput", () => {
+  it("leaves whole amounts bare", () => {
+    assert.equal(toAmountInput(250), "250");
+  });
+
+  it("keeps both decimal places once there are cents", () => {
+    assert.equal(toAmountInput(1275.5), "1275.50");
+    assert.equal(toAmountInput(0.05), "0.05");
   });
 });
