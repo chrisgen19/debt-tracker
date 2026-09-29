@@ -1,27 +1,91 @@
-/**
- * A moment as a `datetime-local` input wants it: the device's wall-clock time to the
- * minute, with no offset. `toISOString` would give UTC, which the input would then
- * display as if it were local.
+import { format } from "date-fns";
+
+/*
+ * Every date the app shows is in the household's timezone, never the device's.
+ *
+ * The server already works that way: the container's TZ (Asia/Manila, see AGENTS.md)
+ * decides month boundaries, "paid this month" and the daily chart. The client used to
+ * format in whatever timezone the phone was set to, so a phone abroad rendered
+ * different day groups and times than the server had, failing hydration, and grouped
+ * entries under days the totals did not count them in. Formatting in one named zone
+ * on both sides makes the server HTML and the first client render identical.
  */
-export function toLocalInput(date: Date) {
-  const local = new Date(date);
-  local.setMinutes(local.getMinutes() - local.getTimezoneOffset());
-  return local.toISOString().slice(0, 16);
+
+type ZonedParts = { year: string; month: string; day: string; hour: string; minute: string };
+
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+/** Calendar and clock fields of an instant as seen in `timeZone`, to the minute. */
+function zonedParts(date: Date, timeZone: string): ZonedParts {
+  let formatter = formatters.get(timeZone);
+  if (!formatter) {
+    // hourCycle h23 rather than hour12: false, which some engines render as "24" at midnight.
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    });
+    formatters.set(timeZone, formatter);
+  }
+  const parts = formatter.formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return { year: get("year"), month: get("month"), day: get("day"), hour: get("hour"), minute: get("minute") };
+}
+
+/** The calendar day an instant falls on in `timeZone`, as `yyyy-MM-dd`. */
+export function dayKey(date: Date, timeZone: string) {
+  const { year, month, day } = zonedParts(date, timeZone);
+  return `${year}-${month}-${day}`;
 }
 
 /**
- * The reverse, for sending: a `datetime-local` value read as the device's own wall-clock
- * time and pinned to an exact instant (UTC ISO).
+ * A `yyyy-MM-dd` day as a Date that formats back to that same day on any device.
+ * Noon keeps it clear of a midnight that a timezone offset could push it across.
+ */
+export function calendarDay(key: string) {
+  return new Date(`${key}T12:00:00`);
+}
+
+/** Wall-clock time in `timeZone`, like "11:34 PM". Assembled by hand rather than taken
+ *  from Intl, whose separator before AM/PM differs between Node and browser ICU builds. */
+export function clockTime(date: Date, timeZone: string) {
+  const { hour, minute } = zonedParts(date, timeZone);
+  const hours = Number(hour);
+  return `${hours % 12 || 12}:${minute} ${hours < 12 ? "AM" : "PM"}`;
+}
+
+/** A short date in `timeZone`, like "Sep 27". */
+export function shortDate(date: Date, timeZone: string) {
+  return format(calendarDay(dayKey(date, timeZone)), "MMM d");
+}
+
+/** An instant as a `datetime-local` input shows it: `timeZone`'s wall-clock time to the minute. */
+export function toLocalInput(date: Date, timeZone: string) {
+  const { year, month, day, hour, minute } = zonedParts(date, timeZone);
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+/** How far `timeZone`'s wall clock runs ahead of UTC at a given instant, in ms. */
+function offsetAt(instant: number, timeZone: string) {
+  const { year, month, day, hour, minute } = zonedParts(new Date(instant), timeZone);
+  const wall = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
+  return wall - Math.floor(instant / 60_000) * 60_000;
+}
+
+/**
+ * The reverse of `toLocalInput`, for sending: a `datetime-local` value read as wall-clock
+ * time in `timeZone` and pinned to an exact instant (UTC ISO), so the server never reads
+ * it in a timezone of its own.
  *
- * Sending the bare value let the server read it in *its* timezone instead. Production
- * runs on Asia/Manila, so a phone set to any other timezone shifted the entry by the
- * difference, even on an edit that never touched the date. With an explicit instant the
- * server's timezone no longer matters.
+ * The offset is read at a first guess and again at the result. The two only differ
+ * across a daylight-saving change; Asia/Manila has none, but nothing here assumes that.
  *
  * An unparseable value (a cleared date field) is passed through untouched, so the
  * server's own validation still answers with a message rather than this throwing.
  */
-export function toInstant(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+export function toInstant(value: string, timeZone: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
+  if (!match) return value;
+  const [year, month, day, hour, minute, second] = match.slice(1).map((part) => Number(part ?? 0));
+  const wall = Date.UTC(year, month - 1, day, hour, minute, second);
+  const guess = wall - offsetAt(wall, timeZone);
+  return new Date(wall - offsetAt(guess, timeZone)).toISOString();
 }

@@ -15,6 +15,7 @@ import { createDebt, deleteDebt, deleteDebts, joinHousehold, setDebtStatus, setD
 import { filterLedgerEntries, isPaidMode, type DirectionFilter, type LedgerMode, type LedgerStatusFilter } from "@/lib/ledger";
 import { clearInstalledAppState } from "@/lib/pwa";
 import { setSelectionFor, summarizeSelection } from "@/lib/selection";
+import { clockTime, dayKey, shortDate } from "@/lib/datetime";
 import { formatMoney, initials } from "@/lib/utils";
 import type { CategoryOption } from "@/lib/categories";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,10 @@ type Props = {
   /** False when R2 is not configured. Hides every receipt affordance rather than
    *  offering an upload that cannot succeed, so the app runs without a bucket. */
   receiptsEnabled: boolean;
+  /** The household's IANA timezone. Every date is shown in it, never the device's, so
+   *  the server render and hydration agree and a phone abroad still sees the days the
+   *  month totals count in. */
+  timeZone: string;
 };
 
 /** Web Share support is a fixed property of the browser, so there is nothing to subscribe to. */
@@ -80,7 +85,7 @@ function ledgerUrl(mode: LedgerMode, monthKey: string) {
 }
 
 export function DashboardClient(props: Props) {
-  const { currentUser, household, members, categories, debts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, ledgerMode, month, summary, chart, openEntryOnLoad, receiptsEnabled } = props;
+  const { currentUser, household, members, categories, debts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, ledgerMode, month, summary, chart, openEntryOnLoad, receiptsEnabled, timeZone } = props;
   const router = useRouter();
   // The "Add an entry" app shortcut lands on `?new=1`. Opening from initial state
   // rather than an effect means the sheet is never briefly visible as closed.
@@ -138,7 +143,7 @@ export function DashboardClient(props: Props) {
               ]}
             />
           </div>
-          <div className="order-3 flex items-center justify-between gap-1 rounded-2xl border border-border bg-card p-1.5 shadow-sm sm:order-2 sm:self-end"><button aria-label="Previous month" onClick={() => goToMonth(month.previous)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowLeft className="size-4" /></button><button onClick={() => goToMonth(format(new Date(), "yyyy-MM"))} className="min-w-36 px-2 text-sm font-bold"><CalendarDays className="mr-2 inline size-4 text-primary" />{month.label}</button><button aria-label="Next month" onClick={() => goToMonth(month.next)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowRight className="size-4" /></button></div>
+          <div className="order-3 flex items-center justify-between gap-1 rounded-2xl border border-border bg-card p-1.5 shadow-sm sm:order-2 sm:self-end"><button aria-label="Previous month" onClick={() => goToMonth(month.previous)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowLeft className="size-4" /></button><button onClick={() => goToMonth(dayKey(new Date(), timeZone).slice(0, 7))} className="min-w-36 px-2 text-sm font-bold"><CalendarDays className="mr-2 inline size-4 text-primary" />{month.label}</button><button aria-label="Next month" onClick={() => goToMonth(month.next)} className="grid size-9 place-items-center rounded-xl hover:bg-secondary"><ArrowRight className="size-4" /></button></div>
           <div className="order-4 sm:order-3 sm:col-span-2">
             <SummaryCarousel
               items={[
@@ -166,6 +171,7 @@ export function DashboardClient(props: Props) {
           pending={pending}
           canAdd={Boolean(partner)}
           receiptsEnabled={receiptsEnabled}
+          timeZone={timeZone}
           onModeChange={showLedger}
           onAdd={openEntry}
           onEdit={openEdit}
@@ -179,7 +185,7 @@ export function DashboardClient(props: Props) {
       {partner && (
         <EntryModal
           key={entrySession} open={entryOpen} currentUser={currentUser} partner={partner} currency={currency}
-          categories={categories} pending={pending} receiptsEnabled={receiptsEnabled} entry={editing ?? undefined}
+          categories={categories} pending={pending} receiptsEnabled={receiptsEnabled} timeZone={timeZone} entry={editing ?? undefined}
           onClose={() => setEntryOpen(false)}
           onSubmit={(input) => run(async () => {
             const result = editing ? await updateDebt(editing.id, input) : await createDebt(input);
@@ -200,7 +206,7 @@ function SummaryCard({ label, value, currency, icon: Icon, tone, detail, actionL
   return <Card className="h-full p-5"><div className="mb-5 flex items-start justify-between"><div className={`grid size-10 place-items-center rounded-2xl ${tones[tone]}`}><Icon className="size-5" /></div><Ellipsis className="size-5 text-muted-foreground/60" /></div><p className="text-sm font-semibold text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-bold tracking-tight sm:text-3xl">{formatMoney(value, currency)}</p>{onDetailClick ? <button type="button" onClick={onDetailClick} className="mt-3 text-left text-xs font-bold text-primary hover:underline">{detail} · {actionLabel}</button> : <p className="mt-3 text-xs font-medium text-muted-foreground">{detail}</p>}</Card>;
 }
 
-function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, currentUser, currency, summary, pending, canAdd, receiptsEnabled, onModeChange, onAdd, onEdit, run }: {
+function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal, paidLimit, openDebtCount, currentUser, currency, summary, pending, canAdd, receiptsEnabled, timeZone, onModeChange, onAdd, onEdit, run }: {
   mode: LedgerMode;
   month: Props["month"];
   monthlyDebts: Debt[];
@@ -215,6 +221,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
   pending: boolean;
   canAdd: boolean;
   receiptsEnabled: boolean;
+  timeZone: string;
   onModeChange: (mode: LedgerMode) => void;
   onAdd: () => void;
   onEdit: (debt: Debt) => void;
@@ -325,11 +332,11 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
     const groups = new Map<string, Debt[]>();
     filtered.forEach((debt) => {
       const basis = settled ? debt.paidAt ?? debt.incurredAt : debt.incurredAt;
-      const key = format(new Date(basis), "yyyy-MM-dd");
+      const key = dayKey(new Date(basis), timeZone);
       groups.set(key, [...(groups.get(key) ?? []), debt]);
     });
     return [...groups.entries()];
-  }, [filtered, settled]);
+  }, [filtered, settled, timeZone]);
 
   type LedgerPrimaryView = "ACTIVITY" | "UNPAID" | "PAYMENTS";
   const primaryView: LedgerPrimaryView = mode === "MONTH" ? "ACTIVITY" : mode === "OPEN" ? "UNPAID" : "PAYMENTS";
@@ -487,6 +494,7 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
                       selecting={selecting}
                       isSelected={selected.has(debt.id)}
                       receiptsEnabled={receiptsEnabled}
+                      timeZone={timeZone}
                       onToggleSelected={toggleSelected}
                       onMarkPaid={() => askToSettle([debt.id], debt.amount)}
                       onEdit={() => onEdit(debt)}
@@ -578,7 +586,7 @@ function BalanceCard({ className, currentUser, partner, summary, currency }: { c
   return <Card className={`relative overflow-hidden bg-[#244b37] text-white ${className ?? ""}`}><div className="absolute -right-16 -top-16 size-52 rounded-full border-[36px] border-white/5"/><CardHeader className="relative"><p className="text-xs font-bold uppercase tracking-[.18em] text-white/60">All-time balance</p><CardTitle className="text-white">Between you two</CardTitle></CardHeader><CardContent className="relative"><div className="mb-6 flex items-center"><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#dcebdc] font-bold text-primary">{initials(currentUser.name)}</div><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><HandCoins className="size-5 text-[#f2d68d]"/><div className="mx-2 h-px flex-1 border-t border-dashed border-white/30"/><div className="grid size-12 place-items-center rounded-full border-2 border-white/40 bg-[#f4dfd5] font-bold text-[#9e4f37]">{partner ? initials(partner.name) : "?"}</div></div><p className="text-sm text-white/65">{!partner ? "Invite your partner to calculate your balance." : net > 0 ? `${partner.name.split(" ")[0]} owes you` : net < 0 ? `You owe ${partner.name.split(" ")[0]}` : "You’re perfectly even"}</p><p className="mt-1 font-display text-4xl font-semibold">{formatMoney(Math.abs(net), currency)}</p><div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-[#f2d68d]" style={{ width: `${Math.min(100, Math.max(8, Math.abs(net) / Math.max(summary.allTimeOwedToYou + summary.allTimeYouOwe, 1) * 100))}%` }} /></div></CardContent></Card>;
 }
 
-function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isSelected, receiptsEnabled, onToggleSelected, onMarkPaid, onEdit, onViewReceipt, run }: {
+function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isSelected, receiptsEnabled, timeZone, onToggleSelected, onMarkPaid, onEdit, onViewReceipt, run }: {
   debt: Debt;
   settled: boolean;
   currentUser: Member;
@@ -587,6 +595,7 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
   selecting: boolean;
   isSelected: boolean;
   receiptsEnabled: boolean;
+  timeZone: string;
   onToggleSelected: (id: string) => void;
   onMarkPaid: () => void;
   onEdit: () => void;
@@ -597,8 +606,8 @@ function DebtRow({ debt, settled, currentUser, currency, pending, selecting, isS
   // In a settled view the group header already carries the payment date, so the
   // row shows when the expense was incurred instead.
   const meta = settled
-    ? `incurred ${format(new Date(debt.incurredAt), "MMM d")}`
-    : format(new Date(debt.incurredAt), "h:mm a");
+    ? `incurred ${shortDate(new Date(debt.incurredAt), timeZone)}`
+    : clockTime(new Date(debt.incurredAt), timeZone);
   const MethodIcon = debt.paymentMethod === "CREDIT_CARD" ? CreditCard : Banknote;
 
   // The checkbox in the icon slot is the keyboard-operable control; the row-wide
