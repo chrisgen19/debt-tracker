@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ImagePlus, LoaderCircle, X } from "lucide-react";
 import { createReceiptUpload } from "@/app/actions";
+import { AddTile } from "@/components/add-tile";
 import { downscaleImage } from "@/lib/downscale";
 import { MAX_RECEIPT_BYTES, validateReceiptUpload } from "@/lib/receipts";
 import { cn } from "@/lib/utils";
@@ -26,10 +28,14 @@ type Props = {
   onUploadingChange?: (uploading: boolean) => void;
   disabled?: boolean;
   label?: string;
+  /** Renders the empty state as an `AddTile`, for a wrapping flex row of optional
+   *  extras. The field takes the whole row once it has a thumbnail or an error. */
+  compact?: boolean;
 };
 
-export function ReceiptField({ receiptId, onChange, onUploadingChange, disabled, label = "Attach a receipt" }: Props) {
+export function ReceiptField({ receiptId, onChange, onUploadingChange, disabled, label = "Attach a receipt", compact }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   // The thumbnail is a blob URL for the local file, so it needs no round trip and is
   // there before the upload finishes. Tagged with the receipt it belongs to: `receiptId`
   // is the parent's, so a parent that clears it must clear this too, and deriving that
@@ -47,8 +53,11 @@ export function ReceiptField({ receiptId, onChange, onUploadingChange, disabled,
   useEffect(() => { if (!shown && inputRef.current) inputRef.current.value = ""; }, [shown]);
 
   function reset() {
-    onChange(null);
+    // Committed synchronously so the picker button is back in the DOM to take focus
+    // from the remove button, which this very update unmounts.
+    flushSync(() => onChange(null));
     if (inputRef.current) inputRef.current.value = "";
+    triggerRef.current?.focus();
   }
 
   async function pick(file: File) {
@@ -87,7 +96,7 @@ export function ReceiptField({ receiptId, onChange, onUploadingChange, disabled,
   const busy = uploading || disabled;
 
   return (
-    <div>
+    <div className={compact ? (shown || error ? "w-full" : "min-w-32 flex-1") : undefined}>
       <input
         ref={inputRef}
         type="file"
@@ -115,8 +124,16 @@ export function ReceiptField({ receiptId, onChange, onUploadingChange, disabled,
             <X className="size-4" />
           </button>
         </div>
+      ) : compact ? (
+        <AddTile
+          ref={triggerRef} icon={ImagePlus} busy={uploading} disabled={busy} className="w-full"
+          onClick={() => inputRef.current?.click()}
+        >
+          {uploading ? "Uploading…" : label}
+        </AddTile>
       ) : (
         <button
+          ref={triggerRef}
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={busy}
