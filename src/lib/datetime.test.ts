@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { calendarDay, clockTime, dayKey, shortDate, toInstant, toLocalInput } from "./datetime";
+import { calendarDay, clockTime, dayKey, daysAgoInput, shortDate, toInstant, toLocalInput } from "./datetime";
 
 // Node re-reads TZ on assignment, so one process can play phones in several zones.
 // What must never change with it is the output: that is what keeps the server HTML and
@@ -67,5 +67,28 @@ describe("entry form round trip", () => {
   it("passes an unparseable value through for the server to reject", () => {
     assert.equal(toInstant("", HOUSEHOLD), "");
     assert.equal(toInstant("not a date", HOUSEHOLD), "not a date");
+  });
+});
+
+describe("daysAgoInput", () => {
+  // A device in a daylight-saving zone, on the days its clock changes. Near household
+  // midnight, a day of the device's calendar is not a day of the household's.
+  const cases = [
+    { label: "the device's fall-back day", now: "2026-11-01T16:30:00Z", today: "2026-11-02T00:30", yesterday: "2026-11-01T00:30" },
+    { label: "the device's spring-forward day", now: "2026-03-08T15:30:00Z", today: "2026-03-08T23:30", yesterday: "2026-03-07T23:30" },
+    { label: "an ordinary day", now: "2026-09-29T16:30:00Z", today: "2026-09-30T00:30", yesterday: "2026-09-29T00:30" },
+  ];
+
+  for (const { label, now, today, yesterday } of cases) {
+    it(`steps back one household day on ${label}`, () => {
+      process.env.TZ = "America/Los_Angeles";
+      assert.equal(daysAgoInput(new Date(now), 0, HOUSEHOLD), today);
+      assert.equal(daysAgoInput(new Date(now), 1, HOUSEHOLD), yesterday);
+    });
+  }
+
+  it("crosses a month boundary", () => {
+    assert.equal(daysAgoInput(new Date("2026-09-30T20:00:00Z"), 1, HOUSEHOLD), "2026-09-30T04:00");
+    assert.equal(daysAgoInput(new Date("2026-10-01T02:00:00Z"), 1, HOUSEHOLD), "2026-09-30T10:00");
   });
 });

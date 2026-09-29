@@ -1,4 +1,4 @@
-import { format } from "date-fns";
+import { format, subDays } from "date-fns";
 
 /*
  * Every date the app shows is in the household's timezone, never the device's.
@@ -61,6 +61,21 @@ export function shortDate(date: Date, timeZone: string) {
 export function toLocalInput(date: Date, timeZone: string) {
   const { year, month, day, hour, minute } = zonedParts(date, timeZone);
   return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+/**
+ * `days` household days before `now`, at the household's current wall-clock time, as a
+ * `datetime-local` value: what the form's Today and Yesterday buttons pick.
+ *
+ * Pure calendar arithmetic on the household day. Subtracting a day from the instant
+ * instead (date-fns' subDays) works in the *device's* calendar, and on the day the
+ * device changes for daylight saving that day is 23 or 25 hours long, so near household
+ * midnight "Yesterday" landed on today or on two days ago.
+ */
+export function daysAgoInput(now: Date, days: number, timeZone: string) {
+  const current = toLocalInput(now, timeZone);
+  const day = format(subDays(calendarDay(current.slice(0, 10)), days), "yyyy-MM-dd");
+  return `${day}${current.slice(10)}`;
 }
 
 /** How far `timeZone`'s wall clock runs ahead of UTC at a given instant, in ms. */

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { format, subDays } from "date-fns";
+import { format } from "date-fns";
 import {
   ArrowLeftRight, Banknote, CalendarDays, Check, CreditCard, HeartPulse, House, ImagePlus, LoaderCircle,
   Plane, Plus, ReceiptText, Shapes, ShoppingBag, ShoppingBasket, StickyNote, UtensilsCrossed, X, Zap,
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ReceiptField } from "@/components/receipt-field";
 import { sanitizeAmount, toAmountInput } from "@/lib/amount";
 import { categoriesIncluding, type CategoryOption } from "@/lib/categories";
-import { calendarDay, dayKey, toInstant, toLocalInput } from "@/lib/datetime";
+import { calendarDay, daysAgoInput, toInstant, toLocalInput } from "@/lib/datetime";
 import { currencySymbol, initials } from "@/lib/utils";
 
 type Person = { id: string; name: string };
@@ -379,12 +379,12 @@ function WhenPicker({ value, timeZone, onChange }: { value: string; timeZone: st
   // `value` is already household wall-clock time, so its first ten characters are the
   // household day. "Today" and "Yesterday" are household days too, not the device's.
   const selectedDay = value.slice(0, 10);
-  const isToday = selectedDay === dayKey(new Date(), timeZone);
-  const isYesterday = selectedDay === dayKey(subDays(new Date(), 1), timeZone);
+  const isToday = selectedDay === daysAgoInput(new Date(), 0, timeZone).slice(0, 10);
+  const isYesterday = selectedDay === daysAgoInput(new Date(), 1, timeZone).slice(0, 10);
 
   function pick(daysAgo: number) {
     // The current household time of day, on the chosen household day.
-    onChange(toLocalInput(subDays(new Date(), daysAgo), timeZone));
+    onChange(daysAgoInput(new Date(), daysAgo, timeZone));
     setCustom(false);
   }
 
