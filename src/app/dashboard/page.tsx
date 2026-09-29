@@ -152,6 +152,9 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
       chart={days}
       openEntryOnLoad={query.new === "1"}
       receiptsEnabled={isReceiptStorageConfigured()}
+      // The zone every boundary above was built in (the container's TZ, see AGENTS.md),
+      // so the client shows dates in it too instead of in the device's timezone.
+      timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
     />
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { format, isSameDay, subDays } from "date-fns";
+import { format } from "date-fns";
 import {
   ArrowLeftRight, Banknote, CalendarDays, Check, CreditCard, HeartPulse, House, ImagePlus, LoaderCircle,
   Plane, Plus, ReceiptText, Shapes, ShoppingBag, ShoppingBasket, StickyNote, UtensilsCrossed, X, Zap,
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ReceiptField } from "@/components/receipt-field";
 import { sanitizeAmount, toAmountInput } from "@/lib/amount";
 import { categoriesIncluding, type CategoryOption } from "@/lib/categories";
-import { toInstant, toLocalInput } from "@/lib/datetime";
+import { calendarDay, daysAgoInput, toInstant, toLocalInput } from "@/lib/datetime";
 import { currencySymbol, initials } from "@/lib/utils";
 
 type Person = { id: string; name: string };
@@ -31,6 +31,8 @@ type Props = {
   pending: boolean;
   /** False when R2 is unconfigured: the receipt affordance is hidden entirely. */
   receiptsEnabled: boolean;
+  /** The household's timezone. The form shows and reads times in it, matching the list. */
+  timeZone: string;
   /** Edits this entry instead of creating one. Status and the receipt are left out of
    *  the sheet in this mode: status has its own mark paid/unpaid controls, which log
    *  each transition, and the receipt is attached when the entry is first logged. */
@@ -60,7 +62,7 @@ function categoryVisual(name: string, index: number) {
   return CATEGORY_VISUALS[name as keyof typeof CATEGORY_VISUALS] ?? CUSTOM_VISUALS[index % CUSTOM_VISUALS.length];
 }
 
-export function EntryModal({ open, currentUser, partner, currency, categories, pending, receiptsEnabled, entry, onClose, onSubmit }: Props) {
+export function EntryModal({ open, currentUser, partner, currency, categories, pending, receiptsEnabled, timeZone, entry, onClose, onSubmit }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const editing = Boolean(entry);
   // Seeded once per mount: the parent remounts the sheet (via `key`) for every open,
@@ -71,7 +73,7 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
   const [category, setCategory] = useState<string>(entry?.category ?? categories[0]?.name ?? "Other");
   const [selectedQuickPick, setSelectedQuickPick] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CREDIT_CARD">(entry?.paymentMethod ?? "CREDIT_CARD");
-  const [incurredAt, setIncurredAt] = useState(() => toLocalInput(entry ? new Date(entry.incurredAt) : new Date()));
+  const [incurredAt, setIncurredAt] = useState(() => toLocalInput(entry ? new Date(entry.incurredAt) : new Date(), timeZone));
   const [settled, setSettled] = useState(false);
   const [notes, setNotes] = useState(entry?.notes ?? "");
   // An existing note starts expanded, and then must not grab focus from the amount.
@@ -127,8 +129,8 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
       amount: numericAmount,
       category,
       paymentMethod,
-      // Pinned to an instant here so the server never reads it in its own timezone.
-      incurredAt: toInstant(incurredAt),
+      // Pinned to an instant here, read as household time, so it lands where the list showed it.
+      incurredAt: toInstant(incurredAt, timeZone),
       notes: notes.trim() || undefined,
       lenderId: direction === "BORROWED" ? partner.id : currentUser.id,
       borrowerId: direction === "BORROWED" ? currentUser.id : partner.id,
@@ -233,7 +235,7 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
             </section>
             <section>
               <Legend>When</Legend>
-              <WhenPicker value={incurredAt} onChange={setIncurredAt} />
+              <WhenPicker value={incurredAt} timeZone={timeZone} onChange={setIncurredAt} />
             </section>
           </div>
 
@@ -372,17 +374,17 @@ function Segmented<T extends string>({ value, onChange, options }: {
   );
 }
 
-function WhenPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function WhenPicker({ value, timeZone, onChange }: { value: string; timeZone: string; onChange: (value: string) => void }) {
   const [custom, setCustom] = useState(false);
-  const selected = new Date(value);
-  const isToday = isSameDay(selected, new Date());
-  const isYesterday = isSameDay(selected, subDays(new Date(), 1));
+  // `value` is already household wall-clock time, so its first ten characters are the
+  // household day. "Today" and "Yesterday" are household days too, not the device's.
+  const selectedDay = value.slice(0, 10);
+  const isToday = selectedDay === daysAgoInput(new Date(), 0, timeZone).slice(0, 10);
+  const isYesterday = selectedDay === daysAgoInput(new Date(), 1, timeZone).slice(0, 10);
 
   function pick(daysAgo: number) {
-    const now = new Date();
-    const target = subDays(now, daysAgo);
-    target.setHours(now.getHours(), now.getMinutes());
-    onChange(toLocalInput(target));
+    // The current household time of day, on the chosen household day.
+    onChange(daysAgoInput(new Date(), daysAgo, timeZone));
     setCustom(false);
   }
 
@@ -398,7 +400,7 @@ function WhenPicker({ value, onChange }: { value: string; onChange: (value: stri
   const options = [
     { label: "Today", active: isToday, onClick: () => pick(0) },
     { label: "Yesterday", active: isYesterday, onClick: () => pick(1) },
-    { label: isToday || isYesterday ? "Pick" : format(selected, "MMM d"), active: !isToday && !isYesterday, onClick: () => setCustom(true) },
+    { label: isToday || isYesterday ? "Pick" : format(calendarDay(selectedDay), "MMM d"), active: !isToday && !isYesterday, onClick: () => setCustom(true) },
   ];
 
   return (
