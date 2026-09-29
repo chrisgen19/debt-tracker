@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
  * own height in the flow, so the list can always be scrolled past it, whatever
  * the bar grows to at that width.
  */
-export function SelectionBar({ selection, currency, settled, pending, allSelected, onSelectAll, onMarkPaid, onMarkUnpaid, onEdit, onDelete, onClear }: {
+export function SelectionBar({ selection, currency, settled, pending, allSelected, onSelectAll, onMarkPaid, onMarkUnpaid, onEdit, onDelete, onClear, note }: {
   selection: SelectionSummary;
   currency: string;
   /** Every row in a paid view is settled, so its totals are payments, not debts. */
@@ -29,6 +29,9 @@ export function SelectionBar({ selection, currency, settled, pending, allSelecte
   onEdit?: () => void;
   onDelete: () => void;
   onClear: () => void;
+  /** The lone selected entry's note, shown whole since the row cuts it to one line.
+   *  Absent for a multi-selection, where there is no single note to show. */
+  note?: string | null;
 }) {
   if (!selection.count) return null;
   const bothStatuses = selection.toPay.length > 0 && selection.toUnpay.length > 0;
@@ -58,6 +61,14 @@ export function SelectionBar({ selection, currency, settled, pending, allSelecte
           <p className="truncate text-xs text-muted-foreground">
             {settled ? "you paid" : "you owe"} {formatMoney(selection.youOwe, currency)} · {settled ? "paid to you" : "owed to you"} {formatMoney(selection.owedToYou, currency)}
           </p>
+          {/* Notes run to 1000 characters, and the bar sticks over the list, so a long
+              one scrolls inside a capped box instead of pushing the bar up the screen.
+              pre-line keeps the line breaks typed into the textarea. */}
+          {note && (
+            <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-line wrap-break-word rounded-xl bg-secondary/60 px-2.5 py-1.5 text-xs italic text-muted-foreground">
+              “{note}”
+            </p>
+          )}
         </div>
 
         {/* Four actions cannot sit on one phone-width line. A grid gives each a
