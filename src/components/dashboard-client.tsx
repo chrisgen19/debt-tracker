@@ -273,6 +273,8 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
     [currentUser.id, entries, filtered, selected],
   );
   const selecting = selection.count > 0;
+  // A lone selection is about one entry, so the bar can speak for it: its note, its edit.
+  const soleEntry = selection.count === 1 ? entries.find((entry) => entry.id === selection.ids[0]) : undefined;
   const allSelected = filtered.length > 0 && filtered.every((debt) => selected.has(debt.id));
 
   function toggleSelected(id: string) {
@@ -529,12 +531,11 @@ function LedgerCard({ mode, month, monthlyDebts, openDebts, paidDebts, paidTotal
         onMarkUnpaid={() => runBulk(() => setDebtStatusBulk(selection.toUnpay, "DEBT"))}
         // The selection has done its job once it names the entry to edit, so it is
         // cleared rather than left armed under the sheet.
-        onEdit={selection.count === 1 ? () => {
-          const debt = entries.find((entry) => entry.id === selection.ids[0]);
-          if (!debt) return;
+        onEdit={soleEntry ? () => {
           clearSelection();
-          onEdit(debt);
+          onEdit(soleEntry);
         } : undefined}
+        note={soleEntry?.notes}
         onDelete={() => {
           if (window.confirm(`Delete ${selection.count === 1 ? "this entry" : `these ${selection.count} entries`}? This cannot be undone.`)) {
             runBulk(() => deleteDebts(selection.ids));
