@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { format } from "date-fns";
 import {
-  ArrowLeftRight, Banknote, CalendarDays, Check, CreditCard, HeartPulse, House, ImagePlus, LoaderCircle,
-  Plane, Plus, ReceiptText, Shapes, ShoppingBag, ShoppingBasket, StickyNote, UtensilsCrossed, X, Zap,
+  ArrowLeftRight, Banknote, CalendarDays, Check, CreditCard, HeartPulse, House, LoaderCircle,
+  Plane, ReceiptText, Shapes, ShoppingBag, ShoppingBasket, StickyNote, UtensilsCrossed, X, Zap,
 } from "lucide-react";
+import { AddTile } from "@/components/add-tile";
 import { Button } from "@/components/ui/button";
 import { ReceiptField } from "@/components/receipt-field";
 import { sanitizeAmount, toAmountInput } from "@/lib/amount";
@@ -76,11 +78,11 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
   const [incurredAt, setIncurredAt] = useState(() => toLocalInput(entry ? new Date(entry.incurredAt) : new Date(), timeZone));
   const [settled, setSettled] = useState(false);
   const [notes, setNotes] = useState(entry?.notes ?? "");
-  // An existing note starts expanded, and then must not grab focus from the amount.
-  const notesStartOpen = Boolean(entry?.notes);
-  const [notesOpen, setNotesOpen] = useState(notesStartOpen);
+  // An existing note starts expanded, without taking focus from the amount.
+  const [notesOpen, setNotesOpen] = useState(Boolean(entry?.notes));
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  const noteTileRef = useRef<HTMLButtonElement>(null);
   const [receiptId, setReceiptId] = useState<string | null>(null);
-  const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptUploading, setReceiptUploading] = useState(false);
 
   const symbol = useMemo(() => currencySymbol(currency), [currency]);
@@ -120,6 +122,18 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
     dialog.addEventListener("click", dismiss);
     return () => dialog.removeEventListener("click", dismiss);
   }, []);
+
+  // Focus follows the note in and out. Each update is committed synchronously so the
+  // element receiving focus exists, and the one losing it never drops focus to the page.
+  function openNote() {
+    flushSync(() => setNotesOpen(true));
+    noteRef.current?.focus();
+  }
+
+  function removeNote() {
+    flushSync(() => { setNotes(""); setNotesOpen(false); });
+    noteTileRef.current?.focus();
+  }
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -239,45 +253,41 @@ export function EntryModal({ open, currentUser, partner, currency, categories, p
             </section>
           </div>
 
-          <section className="space-y-3">
-            {!editing && (
-              <button
-                type="button" role="switch" aria-checked={settled} onClick={() => setSettled((value) => !value)}
-                className={`flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition ${settled ? "border-primary/40 bg-[#eef4ed]" : "border-border hover:bg-secondary/40"}`}
-              >
-                <span className={`grid size-6 shrink-0 place-items-center rounded-lg border transition ${settled ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background"}`}>
-                  {settled && <Check className="size-4" />}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-bold">Already settled</span>
-                  <span className="block text-xs text-muted-foreground">Log it for the record without changing the balance</span>
-                </span>
-              </button>
-            )}
+          {!editing && (
+            <button
+              type="button" role="switch" aria-checked={settled} onClick={() => setSettled((value) => !value)}
+              className={`flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition ${settled ? "border-primary/40 bg-[#eef4ed]" : "border-border hover:bg-secondary/40"}`}
+            >
+              <span className={`grid size-6 shrink-0 place-items-center rounded-lg border transition ${settled ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background"}`}>
+                {settled && <Check className="size-4" />}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-bold">Already settled</span>
+                <span className="block text-xs text-muted-foreground">Log it for the record without changing the balance</span>
+              </span>
+            </button>
+          )}
 
-            {notesOpen ? (
-              <textarea
-                autoFocus={!notesStartOpen} value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={1000}
-                placeholder="Receipt number, who else was there, anything to remember…"
-                className="min-h-20 w-full resize-none rounded-2xl border border-input bg-background px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/10"
-              />
-            ) : (
-              <button type="button" onClick={() => setNotesOpen(true)} className="flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-primary">
-                <StickyNote className="size-4" />Add a note
-                <Plus className="size-3.5" />
-              </button>
-            )}
+          <section>
+            <Legend>Optional details</Legend>
+            {/* Collapsed extras sit two to a row; an opened one takes the full width and
+                its sibling tile stretches to fill the row below. */}
+            <div className="flex flex-wrap items-start gap-2">
+              {notesOpen ? (
+                <NoteField ref={noteRef} value={notes} onChange={setNotes} onRemove={removeNote} />
+              ) : (
+                <AddTile ref={noteTileRef} icon={StickyNote} onClick={openNote}>Add note</AddTile>
+              )}
 
-            {/* Same collapsed-until-wanted idiom as the note above. Deliberately not
-                part of `canSave`: proof is optional, and a cash handover has none. */}
-            {!receiptsEnabled || editing ? null : receiptOpen ? (
-              <ReceiptField receiptId={receiptId} onChange={setReceiptId} onUploadingChange={setReceiptUploading} disabled={pending} />
-            ) : (
-              <button type="button" onClick={() => setReceiptOpen(true)} className="flex items-center gap-2 text-sm font-semibold text-muted-foreground transition hover:text-primary">
-                <ImagePlus className="size-4" />Add a receipt
-                <Plus className="size-3.5" />
-              </button>
-            )}
+              {/* Opens the picker in one tap. Deliberately not part of `canSave`: proof
+                  is optional, and a cash handover has none. */}
+              {receiptsEnabled && !editing && (
+                <ReceiptField
+                  compact label="Add receipt" receiptId={receiptId} onChange={setReceiptId}
+                  onUploadingChange={setReceiptUploading} disabled={pending}
+                />
+              )}
+            </div>
           </section>
         </div>
 
@@ -413,6 +423,31 @@ function WhenPicker({ value, timeZone, onChange }: { value: string; timeZone: st
           {label === "Pick" && <CalendarDays className="size-4" />}{label}
         </button>
       ))}
+    </div>
+  );
+}
+
+function NoteField({ ref, value, onChange, onRemove }: {
+  ref: React.Ref<HTMLTextAreaElement>; value: string; onChange: (value: string) => void; onRemove: () => void;
+}) {
+  return (
+    <div className="w-full">
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <label htmlFor="entry-note" className="text-sm font-bold">Note</label>
+        <button
+          type="button" onClick={onRemove}
+          className="-mr-2 inline-flex h-9 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-muted-foreground outline-none transition hover:bg-secondary/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/20"
+        >
+          <X className="size-3.5" aria-hidden />Remove
+        </button>
+      </div>
+      {/* Grows with the text up to a cap, where it scrolls. 16px on phones, because iOS
+          zooms the page into any field smaller than that when it takes focus. */}
+      <textarea
+        ref={ref} id="entry-note" value={value} onChange={(event) => onChange(event.target.value)} maxLength={1000}
+        placeholder="Receipt number, who else was there, anything to remember…"
+        className="field-sizing-content max-h-48 min-h-20 w-full resize-none rounded-2xl border border-input bg-background px-4 py-3 text-base outline-none placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/10 sm:text-sm"
+      />
     </div>
   );
 }
