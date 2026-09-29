@@ -4,7 +4,8 @@ import { cn } from "@/lib/utils";
 
 type Props = React.ComponentProps<"button"> & {
   icon: React.ElementType;
-  /** Swaps the icon for a spinner while the tile's work is in flight. */
+  /** Swaps the icon for a spinner while the tile's work is in flight. Visual only:
+   *  the owner announces progress through its own live region. */
   busy?: boolean;
 };
 
@@ -18,7 +19,6 @@ export function AddTile({ icon: Icon, busy, className, children, ...props }: Pro
   return (
     <button
       type="button"
-      aria-busy={busy || undefined}
       className={cn(
         "flex h-12 min-w-32 flex-1 items-center justify-center gap-2 rounded-xl border border-dashed border-input bg-secondary/30 px-3 text-sm font-bold text-muted-foreground outline-none transition active:scale-[.98]",
         "hover:border-primary/40 hover:bg-secondary/60 hover:text-primary focus-visible:border-primary/50 focus-visible:text-primary focus-visible:ring-2 focus-visible:ring-ring/20",

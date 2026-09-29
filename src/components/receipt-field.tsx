@@ -153,6 +153,9 @@ export function ReceiptField({ receiptId, onChange, onUploadingChange, disabled,
         </button>
       )}
 
+      {/* Always mounted so screen readers hear each change: a live region inserted
+          along with its text is often missed. Failures go through the alert below. */}
+      <p role="status" className="sr-only">{uploading ? "Uploading receipt" : shown ? "Receipt attached" : ""}</p>
       {error && <p role="alert" className="mt-2 text-sm font-medium text-red-600">{error}</p>}
     </div>
   );
